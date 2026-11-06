@@ -1,0 +1,12 @@
+[project]
+name = "hermes-ticket-sync"
+version = "0.1.0"
+description = "Hermes Agent plugin: two-way sync between Hermes kanban cards and issue trackers"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

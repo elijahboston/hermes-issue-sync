@@ -1,0 +1,41 @@
+name: hermes-ticket-sync
+version: "0.1.0"
+manifest_version: 2
+description: Two-way sync between Hermes kanban cards and issue trackers (Linear, Jira, GitHub, ...).
+author: Elijah Boston
+license: MIT
+provides_tools: []
+provides_hooks:
+  - on_kanban_dispatch_tick
+  - kanban_task_claimed
+  - kanban_task_completed
+  - kanban_task_blocked
+config_schema:
+  tracker:
+    type: str
+    default: ""
+    description: Tracker adapter to sync with (for example "fake"). Sync is off while empty.
+  filter:
+    type: dict
+    default: {}
+    description: Adapter-specific filter selecting which tracker issues become kanban cards.
+  state_map:
+    type: dict
+    default: {}
+    description: Kanban status (ready, running, blocked, review, done) to tracker state name pushed on change.
+  assignee:
+    type: str
+    default: ""
+    description: Hermes profile assigned to cards created from tracker issues; empty leaves cards unassigned.
+  board:
+    type: str
+    default: ""
+    description: Kanban board slug to sync; empty uses the default board.
+  poll_interval_seconds:
+    type: int
+    default: 60
+    description: Minimum seconds between tracker polls on the kanban dispatch tick.
+  enabled:
+    type: bool
+    default: true
+    description: Set to false to keep the plugin loaded without syncing.
