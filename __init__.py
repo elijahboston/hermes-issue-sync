@@ -6,6 +6,7 @@ used: ``ctx.register_hook``, ``ctx.register_command``, ``ctx.get_config``, ``ctx
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 import time
@@ -32,6 +33,11 @@ _DEFAULTS: dict[str, Any] = {
     "board": "",
     "poll_interval_seconds": 60,
     "enabled": True,
+    # Adapter credentials: names of the env vars / profile secrets to read, never the values.
+    "api_key_env": "LINEAR_API_KEY",
+    "base_url_env": "JIRA_BASE_URL",
+    "email_env": "JIRA_EMAIL",
+    "token_env": "JIRA_API_TOKEN",
 }
 
 _logged: set[str] = set()
@@ -50,7 +56,7 @@ def _read_settings(ctx: Any) -> dict[str, Any]:
     for key, default in _DEFAULTS.items():
         value = ctx.get_config(key, default=default)
         settings[key] = default if value is None else value
-    for key in ("tracker", "assignee", "board"):
+    for key in ("tracker", "assignee", "board", "api_key_env", "base_url_env", "email_env", "token_env"):
         settings[key] = str(settings[key]).strip()
     for key in ("filter", "state_map"):
         if not isinstance(settings[key], Mapping):
@@ -186,7 +192,11 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True) -> None:
                 return
             if worker and worker[0].is_alive():
                 return
-            thread = threading.Thread(target=engine.tick, name="ticket-sync-tick", daemon=True)
+            # The copied context carries the profile's secret scope (and any other ContextVar)
+            # into the worker thread; a bare Thread would start with an empty context.
+            context = contextvars.copy_context()
+            thread = threading.Thread(target=context.run, args=(engine.tick,),
+                                      name="ticket-sync-tick", daemon=True)
             worker[:] = [thread]
             thread.start()
         except Exception as exc:

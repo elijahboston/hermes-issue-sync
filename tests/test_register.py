@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import contextvars
 import importlib
+import threading
 
 import pytest
 
@@ -189,3 +191,31 @@ def test_status_shows_future_backoff(plugin, kanban, stub_ctx):
 def test_unknown_subcommand_returns_usage(make_ctx, kanban):
     ctx = make_ctx(tracker="fake")
     assert _status(ctx, "frobnicate").startswith("usage:")
+
+
+_PROFILE_SCOPE: contextvars.ContextVar[str | None] = contextvars.ContextVar("_PROFILE_SCOPE", default=None)
+
+
+def test_background_tick_keeps_the_callers_context(plugin, kanban, stub_ctx):
+    """The tick thread sees ContextVars (e.g. Hermes' profile secret scope) set by the hook caller."""
+    seen: list[tuple[str | None, str]] = []
+    ran = threading.Event()
+    list_cards = kanban.list_cards
+
+    def recording_list_cards(*args, **kwargs):
+        seen.append((_PROFILE_SCOPE.get(), threading.current_thread().name))
+        ran.set()
+        return list_cards(*args, **kwargs)
+
+    kanban.list_cards = recording_list_cards
+    ctx = stub_ctx({"tracker": "fake"})
+    plugin.register(ctx, kanban=kanban, background=True)
+
+    def dispatcher() -> None:
+        _PROFILE_SCOPE.set("profile-a")
+        ctx.hooks["on_kanban_dispatch_tick"](board="default")
+
+    contextvars.Context().run(dispatcher)  # set only in the dispatcher's own context
+    assert ran.wait(5)
+    assert seen == [("profile-a", "ticket-sync-tick")]
+    assert _PROFILE_SCOPE.get() is None

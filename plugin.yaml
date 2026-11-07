@@ -14,11 +14,30 @@ config_schema:
   tracker:
     type: str
     default: ""
-    description: Tracker adapter to sync with (for example "fake"). Sync is off while empty.
+    description: Tracker adapter to sync with ("linear", "jira", or "fake"). Sync is off while empty.
   filter:
     type: dict
     default: {}
-    description: Adapter-specific filter selecting which tracker issues become kanban cards.
+    description: >-
+      Which tracker issues become kanban cards; always include a project, since labels are
+      team- or site-wide. Linear keys: label (default "agent"), project (project name), team
+      (team key, optional); all ANDed. Jira keys: project and label (default "agent"), or a raw jql.
+  api_key_env:
+    type: str
+    default: LINEAR_API_KEY
+    description: "Linear: name of the env var / profile secret holding the Linear API key (sent as-is, no Bearer)."
+  base_url_env:
+    type: str
+    default: JIRA_BASE_URL
+    description: "Jira: name of the env var / profile secret holding the site URL, e.g. https://example.atlassian.net."
+  email_env:
+    type: str
+    default: JIRA_EMAIL
+    description: "Jira: name of the env var / profile secret holding the Atlassian account email for Basic auth."
+  token_env:
+    type: str
+    default: JIRA_API_TOKEN
+    description: "Jira: name of the env var / profile secret holding the Atlassian API token for Basic auth."
   state_map:
     type: dict
     default: {}

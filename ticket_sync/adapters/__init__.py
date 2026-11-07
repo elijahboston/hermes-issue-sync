@@ -30,7 +30,20 @@ def available_adapters() -> list[str]:
     return sorted(_REGISTRY)
 
 
+def _linear(settings: Mapping[str, Any]) -> TrackerAdapter:
+    # Imported on use: the HTTP adapters import ``ticket_sync.http``, which imports ``.base``.
+    from .linear import LinearAdapter
+    return LinearAdapter(settings)
+
+
+def _jira(settings: Mapping[str, Any]) -> TrackerAdapter:
+    from .jira import JiraAdapter
+    return JiraAdapter(settings)
+
+
 register_adapter("fake", lambda settings: FakeAdapter())
+register_adapter("linear", _linear)
+register_adapter("jira", _jira)
 
 __all__ = [
     "AdapterError", "AdapterFactory", "Comment", "FakeAdapter", "Issue", "RateLimited",
