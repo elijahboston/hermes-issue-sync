@@ -14,8 +14,9 @@ import time
 from typing import Any, Callable, Iterable, Mapping
 
 from .adapters.base import RateLimited, TrackerAdapter
-from .signature import sign
-from .links import Link, card_body, card_title, done_note, has_done_note, idempotency_key, link_from_card
+from .signature import sign, strip_signature
+from .links import (Link, asked_note, card_body, card_title, done_note, has_done_note, has_note,
+                    idempotency_key, link_from_card)
 from .state import SyncState
 
 logger = logging.getLogger(__name__)
@@ -112,7 +113,7 @@ class SyncEngine:
             # Phases are independent: a broken tracker filter must not stop completion summaries.
             self._phase("inbound", errors, self._poll_inbound, cards)
             self._phase("outbound", errors, self._push_outbound, cards)
-            self._phase("blocking", errors, self.sync_block_questions)
+            self._phase("blocking", errors, self.sync_block_questions, cards)
         except RateLimited as exc:
             delay = max(exc.retry_after, MIN_BACKOFF)
             self.state.backoff_until = self.clock() + delay
@@ -188,7 +189,10 @@ class SyncEngine:
             if task_id is None:
                 return self._push_outbound(self.kanban.list_cards())
             show = self.kanban.show_card(task_id)
-            return self._push_card(show["task"], show)
+            moved = self._push_card(show["task"], show)
+            if show["task"].get("status") == "blocked":
+                self._sync_block_card(show["task"], show)
+            return moved
         finally:
             self._lock.release()
 
@@ -248,10 +252,77 @@ class SyncEngine:
 
     # ── blocking questions (CORE-605) ─────────────────────────────────────
 
-    def sync_block_questions(self) -> None:
-        """Seam for CORE-605 two-way blocking; intentionally a no-op in CORE-602.
+    def sync_block_questions(self, cards: Iterable[Mapping[str, Any]] | None = None) -> int:
+        """Two-way blocking. Returns questions posted + answers relayed.
 
-        CORE-605 will mirror a blocked card's question onto its tracker issue and, when a
-        human answers on the tracker, relay the answer with ``kanban unblock`` (using the
-        per-link ``comment_cursor`` from ``list_comments_since``).
+        A blocked card's question (the reason of its latest ``blocked`` event) is posted once as a
+        signed comment on its tracker issue. The first human comments after that question are
+        relayed back with ``kanban unblock``, so the worker resumes with the answer. Comments the
+        plugin wrote are recognised by their signature, not their author (the plugin posts with
+        the user's own key).
         """
+        if cards is None:
+            cards = self.kanban.list_cards(status="blocked")
+        return sum(self._sync_block_card(card) for card in cards if card.get("status") == "blocked")
+
+    @staticmethod
+    def _latest_block(show: Mapping[str, Any]) -> tuple[str, str] | None:
+        blocks = [e for e in show.get("events") or [] if isinstance(e, Mapping) and e.get("kind") == "blocked"]
+        if not blocks:
+            return None
+        latest = max(blocks, key=lambda e: e.get("created_at") or 0)
+        reason = str((latest.get("payload") or {}).get("reason") or "").strip()
+        return f"{latest.get('created_at')}:{latest.get('run_id')}", reason
+
+    def _sync_block_card(self, card: Mapping[str, Any], show: Mapping[str, Any] | None = None) -> int:
+        link = link_from_card(card)
+        if link is None or link.tracker != self.adapter.name:
+            return 0
+        card_id = card.get("id")
+        try:
+            show = show if show is not None else self.kanban.show_card(card_id)
+            block = self._latest_block(show)
+            if block is None:
+                return 0
+            block_id, reason = block
+            entry = self.state.link(link.id)
+            if entry.get("answered_block") == block_id:
+                return 0  # answered; waiting for the unblock to show up on the board
+            note = asked_note(link, block_id)
+            if entry.get("asked_block") != block_id and not has_note(show.get("comments"), note):
+                return self._ask(link, card_id, block_id, reason, entry.get("comment_cursor"), note)
+            if entry.get("asked_block") != block_id:
+                # Asked by another process (worker hook); adopt its question without a cursor reset.
+                self.state.update_link(link.id, asked_block=block_id)
+            return self._relay_answer(link, card_id, block_id, entry.get("comment_cursor"))
+        except RateLimited:
+            raise
+        except Exception as exc:
+            self.state.update_link(link.id, last_error=_error_text(exc))
+            logger.warning("ticket-sync: blocking sync failed for %s: %s", link.id, _error_text(exc))
+            return 0
+
+    def _ask(self, link: Link, card_id: Any, block_id: str, reason: str, cursor: str | None, note: str) -> int:
+        question = reason or "(no reason given)"
+        body = ("Hermes is blocked on this issue and needs an answer:\n\n"
+                + "\n".join(f"> {line}" for line in question.splitlines())
+                + "\n\nReply in a comment here and the card will resume with your answer.")
+        self.adapter.post_comment(link.key, sign(body))
+        # Move the cursor past everything up to and including the question, so only replies
+        # written after it count as answers.
+        _, cursor = self.adapter.list_comments_since(link.key, cursor)
+        self.state.update_link(link.id, asked_block=block_id, comment_cursor=cursor, last_error=None)
+        self.kanban.comment(card_id, note)
+        return 1
+
+    def _relay_answer(self, link: Link, card_id: Any, block_id: str, cursor: str | None) -> int:
+        comments, new_cursor = self.adapter.list_comments_since(link.key, cursor)
+        answers = [c for c in comments if not c.is_bot and c.body.strip()]
+        if not answers:
+            if new_cursor != cursor:
+                self.state.update_link(link.id, comment_cursor=new_cursor)
+            return 0
+        text = "\n\n".join(f"{c.author or 'someone'}: {strip_signature(c.body).strip()}" for c in answers)
+        self.kanban.unblock(card_id, f"Answer from {self.adapter.name} issue {link.key}:\n{text}")
+        self.state.update_link(link.id, comment_cursor=new_cursor, answered_block=block_id, last_error=None)
+        return 1

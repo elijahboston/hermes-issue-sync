@@ -20,6 +20,7 @@ _MARKER_RE = re.compile(
 # Author used for every comment the plugin writes on a kanban card.
 COMMENT_AUTHOR = "ticket-sync"
 _DONE_NOTE = "ticket-sync: posted the completion summary to {tracker} issue {key}"
+_ASKED_NOTE = "ticket-sync: asked on {tracker} issue {key} (block {block})"
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,18 @@ def done_note(link: Link) -> str:
 
 def has_done_note(comments: Iterable[Mapping[str, Any]] | None, link: Link) -> bool:
     note = done_note(link)
+    return any(
+        c.get("author") == COMMENT_AUTHOR and (c.get("body") or "").strip() == note
+        for c in comments or ()
+    )
+
+
+def asked_note(link: Link, block_id: str) -> str:
+    """Card comment recording that the blocked question for ``block_id`` reached the tracker."""
+    return _ASKED_NOTE.format(tracker=link.tracker, key=link.key, block=block_id)
+
+
+def has_note(comments: Iterable[Mapping[str, Any]] | None, note: str) -> bool:
     return any(
         c.get("author") == COMMENT_AUTHOR and (c.get("body") or "").strip() == note
         for c in comments or ()

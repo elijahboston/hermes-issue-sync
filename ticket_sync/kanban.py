@@ -134,6 +134,7 @@ class FakeKanban:
         self.summaries: dict[str, str | None] = {}
         self.comments: dict[str, list[dict[str, Any]]] = {}
         self.idempotency_keys: dict[str, str] = {}
+        self.events: dict[str, list[dict[str, Any]]] = {}
         self._failures: dict[str, list[Exception]] = {}
         self._seq = itertools.count(1)
 
@@ -152,6 +153,15 @@ class FakeKanban:
 
     def set_status(self, task_id: str, status: str) -> None:
         self._card(task_id)["status"] = status
+
+    def block(self, task_id: str, reason: str) -> None:
+        """Block a card the way ``hermes kanban block`` does: a ``blocked`` event + a comment."""
+        card = self._card(task_id)
+        card["status"] = "blocked"
+        stamp = 1_794_000_000 + next(self._seq)
+        self.events.setdefault(task_id, []).append(
+            {"kind": "blocked", "payload": {"reason": reason}, "created_at": stamp, "run_id": None})
+        self.comments[task_id].append({"author": "worker", "body": f"BLOCKED: {reason}", "created_at": stamp})
 
     def set_summary(self, task_id: str, summary: str | None) -> None:
         self._card(task_id)
@@ -188,7 +198,7 @@ class FakeKanban:
         card = self._card(task_id)
         return {"task": copy.deepcopy(card), "latest_summary": self.summaries.get(task_id),
                 "parents": [], "children": [], "comments": copy.deepcopy(self.comments[task_id]),
-                "events": [], "runs": []}
+                "events": copy.deepcopy(self.events.get(task_id, [])), "runs": []}
 
     def create_card(self, title: str, body: str, *, idempotency_key: str, assignee: str | None = None) -> str:
         self.calls.append(("create_card", title, body, idempotency_key, assignee))
@@ -210,3 +220,4 @@ class FakeKanban:
         card = self._card(task_id)
         if card["status"] == "blocked":
             card["status"] = "ready"
+            self.comments[task_id].append({"author": "user", "body": reason, "created_at": int(time.time())})
