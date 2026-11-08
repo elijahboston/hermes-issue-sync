@@ -105,6 +105,15 @@ Statuses left out of `state_map` are not pushed to the tracker.
 
 - `/issues status` — show the tracker, last poll time, backoff, and recent errors.
 
+## Known Hermes issue: multi-profile gateways
+
+On a gateway that serves several profiles, Hermes fires `on_kanban_dispatch_tick` without a
+profile secret scope, so a plain `get_secret` read raises `UnscopedSecretError`. Until Hermes
+binds the scope itself, the plugin binds its own profile's scope around its hooks
+(`issue_sync/secrets.py:ensure_profile_scope`). It mirrors what Hermes's own auto-decompose tick
+does, and it does nothing when Hermes already bound a scope or the gateway serves one profile.
+Upstream report: see the link in the catalog entry.
+
 ## Development
 
 ```sh

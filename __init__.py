@@ -16,6 +16,7 @@ from typing import Any, Callable, Mapping
 from .issue_sync.adapters import get_adapter
 from .issue_sync.engine import SyncEngine
 from .issue_sync.kanban import KanbanClient
+from .issue_sync.secrets import ensure_profile_scope
 from .issue_sync.state import SyncState
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,12 @@ def _board_matches(settings: Mapping[str, Any], kwargs: Mapping[str, Any]) -> bo
     if not board or "board" not in kwargs:
         return True
     return (kwargs.get("board") or "default") == board
+
+
+def _scoped(fn: Callable[..., Any], *args: Any) -> Any:
+    """Run ``fn`` with this profile's secret scope bound (see ``ensure_profile_scope``)."""
+    with ensure_profile_scope():
+        return fn(*args)
 
 
 def _iso(ts: float) -> str:
@@ -188,14 +195,14 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True) -> None:
             if not engine.due():
                 return
             if not background:
-                engine.tick()
+                _scoped(engine.tick)
                 return
             if worker and worker[0].is_alive():
                 return
             # The copied context carries the profile's secret scope (and any other ContextVar)
             # into the worker thread; a bare Thread would start with an empty context.
             context = contextvars.copy_context()
-            thread = threading.Thread(target=context.run, args=(engine.tick,),
+            thread = threading.Thread(target=context.run, args=(_scoped, engine.tick),
                                       name="issue-sync-tick", daemon=True)
             worker[:] = [thread]
             thread.start()
@@ -208,7 +215,7 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True) -> None:
                 task_id = kwargs.get("task_id")
                 if not task_id or not _board_matches(settings, kwargs):
                     return
-                engine.push_outbound(str(task_id))
+                _scoped(engine.push_outbound, str(task_id))
             except Exception as exc:
                 logger.warning("issue-sync: %s push for %s failed: %s: %s",
                                event, kwargs.get("task_id"), type(exc).__name__, exc)
