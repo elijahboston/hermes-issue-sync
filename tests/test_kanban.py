@@ -3,7 +3,7 @@ import subprocess
 
 import pytest
 
-from ticket_sync.kanban import FakeKanban, KanbanClient, KanbanError
+from issue_sync.kanban import FakeKanban, KanbanClient, KanbanError
 
 
 class Runner:
@@ -74,10 +74,10 @@ def test_show_without_task_is_an_error():
 def test_create_passes_body_on_stdin():
     runner = Runner('{"id": "t_0000beef"}')
     card_id = KanbanClient("ops", runner=runner).create_card(
-        "[FAKE-1] Fix", "<!-- marker -->\n\nbody\n", idempotency_key="ticket-sync:fake:FAKE-1", assignee="worker")
+        "[FAKE-1] Fix", "<!-- marker -->\n\nbody\n", idempotency_key="issue-sync:fake:FAKE-1", assignee="worker")
     assert card_id == "t_0000beef"
     assert runner.argv == ["hermes", "kanban", "--board", "ops", "create", "[FAKE-1] Fix", "--body-file", "-",
-                           "--idempotency-key", "ticket-sync:fake:FAKE-1", "--assignee", "worker", "--json"]
+                           "--idempotency-key", "issue-sync:fake:FAKE-1", "--assignee", "worker", "--json"]
     assert runner.kwargs["input"] == "<!-- marker -->\n\nbody\n"
 
 
@@ -107,7 +107,7 @@ def test_create_without_id_is_an_error(stdout):
 def test_comment_uses_author_and_end_of_options():
     runner = Runner("")
     KanbanClient("ops", runner=runner).comment("t_1", "--not a flag")
-    assert runner.argv == ["hermes", "kanban", "--board", "ops", "comment", "--author", "ticket-sync", "--",
+    assert runner.argv == ["hermes", "kanban", "--board", "ops", "comment", "--author", "issue-sync", "--",
                            "t_1", "--not a flag"]
 
 
@@ -149,14 +149,14 @@ def test_bad_json_raises():
 
 def test_fake_create_is_idempotent_unless_archived():
     kanban = FakeKanban()
-    first = kanban.create_card("T", "B", idempotency_key="ticket-sync:fake:A")
-    assert kanban.create_card("T2", "B2", idempotency_key="ticket-sync:fake:A") == first
+    first = kanban.create_card("T", "B", idempotency_key="issue-sync:fake:A")
+    assert kanban.create_card("T2", "B2", idempotency_key="issue-sync:fake:A") == first
     assert kanban.cards[first]["status"] == "ready"
     assert len(kanban.cards) == 1
-    other = kanban.create_card("T", "B", idempotency_key="ticket-sync:fake:B")
+    other = kanban.create_card("T", "B", idempotency_key="issue-sync:fake:B")
     assert other != first
     kanban.set_status(first, "archived")
-    recreated = kanban.create_card("T", "B", idempotency_key="ticket-sync:fake:A")
+    recreated = kanban.create_card("T", "B", idempotency_key="issue-sync:fake:A")
     assert recreated not in (first, other)
 
 
@@ -172,7 +172,7 @@ def test_fake_list_show_comment():
     show = kanban.show_card(live)
     assert show["task"]["status"] == "running"
     assert show["latest_summary"] == "did it"
-    assert [(c["author"], c["body"]) for c in show["comments"]] == [("ticket-sync", "hello")]
+    assert [(c["author"], c["body"]) for c in show["comments"]] == [("issue-sync", "hello")]
     assert isinstance(show["comments"][0]["created_at"], int)
 
     with pytest.raises(KanbanError):

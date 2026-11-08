@@ -2,13 +2,13 @@ import logging
 
 import pytest
 
-from ticket_sync.signature import sign
-from ticket_sync.adapters.base import AdapterError, RateLimited, TransitionNotAllowed
-from ticket_sync.adapters.fake import FakeAdapter
-from ticket_sync.engine import SyncEngine
-from ticket_sync.kanban import FakeKanban, KanbanError
-from ticket_sync.links import Link, card_body, card_title, done_note, link_from_card
-from ticket_sync.state import MemoryStore, SyncState
+from issue_sync.signature import sign
+from issue_sync.adapters.base import AdapterError, RateLimited, TransitionNotAllowed
+from issue_sync.adapters.fake import FakeAdapter
+from issue_sync.engine import SyncEngine
+from issue_sync.kanban import FakeKanban, KanbanError
+from issue_sync.links import Link, card_body, card_title, done_note, link_from_card
+from issue_sync.state import MemoryStore, SyncState
 
 STATE_MAP = {"running": "In Progress", "review": "In Review", "done": "Done"}
 
@@ -79,7 +79,7 @@ def test_inbound_creates_card_with_marker_key_and_assignee():
     assert card["body"] == card_body("fake", "FAKE-1", "https://t.invalid/FAKE-1", "Steps to reproduce")
     assert link_from_card(card) == Link("fake", "FAKE-1", "https://t.invalid/FAKE-1")
     assert card["assignee"] == "worker"
-    assert env.kanban.idempotency_keys[card_id] == "ticket-sync:fake:FAKE-1"
+    assert env.kanban.idempotency_keys[card_id] == "issue-sync:fake:FAKE-1"
     assert env.state.link("fake:FAKE-1") == {"card_id": card_id, "last_pushed_state": "Todo", "last_error": None}
 
 
@@ -214,7 +214,7 @@ def test_done_posts_latest_summary_once_and_notes_the_card(env):
     assert env.calls("post_comment") == [("post_comment", "FAKE-1", sign("Fixed the login redirect."))]
     assert env.calls("move_issue") == [("move_issue", "FAKE-1", "In Progress"), ("move_issue", "FAKE-1", "Done")]
     note = done_note(Link("fake", "FAKE-1"))
-    assert [(c["author"], c["body"]) for c in env.kanban.comments[card_id]] == [("ticket-sync", note)]
+    assert [(c["author"], c["body"]) for c in env.kanban.comments[card_id]] == [("issue-sync", note)]
     assert env.state.link("fake:FAKE-1")["done_comment_posted"] is True
 
 
@@ -271,7 +271,7 @@ def test_one_failing_link_does_not_stop_the_others(env, exc, caplog):
     linked(env, "FAKE-1", "FAKE-2", status="running")
     env.adapter.fail_next("move_issue", exc, key="FAKE-1")
 
-    with caplog.at_level(logging.WARNING, logger="ticket_sync.engine"):
+    with caplog.at_level(logging.WARNING, logger="issue_sync.engine"):
         assert env.engine.tick(force=True) is True
 
     assert env.state.link("fake:FAKE-1")["last_error"] == "workflow forbids it"

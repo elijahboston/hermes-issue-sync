@@ -1,4 +1,4 @@
-from ticket_sync.adapters import adf
+from issue_sync.adapters import adf
 
 
 def doc(*content):

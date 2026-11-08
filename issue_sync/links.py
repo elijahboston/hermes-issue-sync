@@ -1,8 +1,8 @@
 """The card <-> tracker issue link, stored on the card itself.
 
 Every synced card carries a first-line marker
-``<!-- ticket-sync tracker=<tracker> key=<issue_key> url=<url> -->`` and was created
-with the idempotency key ``ticket-sync:<tracker>:<issue_key>``. Any process that can
+``<!-- issue-sync tracker=<tracker> key=<issue_key> url=<url> -->`` and was created
+with the idempotency key ``issue-sync:<tracker>:<issue_key>``. Any process that can
 read the card can recover the link; no plugin state is needed to know a card is synced.
 """
 
@@ -13,14 +13,14 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 from urllib.parse import quote
 
-MARKER_PREFIX = "<!-- ticket-sync "
+MARKER_PREFIX = "<!-- issue-sync "
 _MARKER_RE = re.compile(
-    r"^<!-- ticket-sync tracker=(?P<tracker>\S+) key=(?P<key>\S+) url=(?P<url>\S*) -->$"
+    r"^<!-- issue-sync tracker=(?P<tracker>\S+) key=(?P<key>\S+) url=(?P<url>\S*) -->$"
 )
 # Author used for every comment the plugin writes on a kanban card.
-COMMENT_AUTHOR = "ticket-sync"
-_DONE_NOTE = "ticket-sync: posted the completion summary to {tracker} issue {key}"
-_ASKED_NOTE = "ticket-sync: asked on {tracker} issue {key} (block {block})"
+COMMENT_AUTHOR = "issue-sync"
+_DONE_NOTE = "issue-sync: posted the completion summary to {tracker} issue {key}"
+_ASKED_NOTE = "issue-sync: asked on {tracker} issue {key} (block {block})"
 
 
 @dataclass(frozen=True)
@@ -37,7 +37,7 @@ class Link:
 
 def _token(name: str, value: str) -> str:
     if not value or any(ch.isspace() for ch in value) or "-->" in value:
-        raise ValueError(f"ticket-sync {name} must be non-empty without whitespace or '-->': {value!r}")
+        raise ValueError(f"issue-sync {name} must be non-empty without whitespace or '-->': {value!r}")
     return value
 
 
@@ -48,7 +48,7 @@ def build_marker(tracker: str, key: str, url: str = "") -> str:
 
 
 def idempotency_key(tracker: str, key: str) -> str:
-    return f"ticket-sync:{_token('tracker', tracker)}:{_token('key', key)}"
+    return f"issue-sync:{_token('tracker', tracker)}:{_token('key', key)}"
 
 
 def card_title(key: str, title: str) -> str:

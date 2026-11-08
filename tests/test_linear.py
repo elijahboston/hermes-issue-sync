@@ -2,9 +2,9 @@ import json
 
 import pytest
 
-from ticket_sync.signature import sign
-from ticket_sync.adapters.base import AdapterError, Issue, RateLimited, TransitionNotAllowed
-from ticket_sync.adapters.linear import API_URL, LinearAdapter
+from issue_sync.signature import sign
+from issue_sync.adapters.base import AdapterError, Issue, RateLimited, TransitionNotAllowed
+from issue_sync.adapters.linear import API_URL, LinearAdapter
 
 KEY = "lin_api_test_secret_value"
 NOW = 1_794_000_000.0

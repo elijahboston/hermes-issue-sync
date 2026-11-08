@@ -1,4 +1,4 @@
-"""hermes-ticket-sync: two-way sync between Hermes kanban cards and issue trackers.
+"""hermes-issue-sync: two-way sync between Hermes kanban cards and issue trackers.
 
 Hermes loads this package and calls ``register(ctx)``. Only documented plugin surfaces are
 used: ``ctx.register_hook``, ``ctx.register_command``, ``ctx.get_config``, ``ctx.state``.
@@ -13,17 +13,17 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
-from .ticket_sync.adapters import get_adapter
-from .ticket_sync.engine import SyncEngine
-from .ticket_sync.kanban import KanbanClient
-from .ticket_sync.state import SyncState
+from .issue_sync.adapters import get_adapter
+from .issue_sync.engine import SyncEngine
+from .issue_sync.kanban import KanbanClient
+from .issue_sync.state import SyncState
 
 logger = logging.getLogger(__name__)
 
-TRACKER_SETTING = "plugins.entries.hermes-ticket-sync.settings.tracker"
-ENABLED_SETTING = "plugins.entries.hermes-ticket-sync.settings.enabled"
+TRACKER_SETTING = "plugins.entries.hermes-issue-sync.settings.tracker"
+ENABLED_SETTING = "plugins.entries.hermes-issue-sync.settings.enabled"
 HOOKS = ("on_kanban_dispatch_tick", "kanban_task_claimed", "kanban_task_completed", "kanban_task_blocked")
-USAGE = "usage: /tickets status"
+USAGE = "usage: /issues status"
 
 _DEFAULTS: dict[str, Any] = {
     "tracker": "",
@@ -60,7 +60,7 @@ def _read_settings(ctx: Any) -> dict[str, Any]:
         settings[key] = str(settings[key]).strip()
     for key in ("filter", "state_map"):
         if not isinstance(settings[key], Mapping):
-            _log_once(logging.WARNING, "ticket-sync: setting %r must be a mapping; ignoring it", key)
+            _log_once(logging.WARNING, "issue-sync: setting %r must be a mapping; ignoring it", key)
             settings[key] = {}
         settings[key] = dict(settings[key])
     return settings
@@ -101,9 +101,9 @@ def _iso(ts: float) -> str:
 def status_text(engine_or_none: Any, state: SyncState, settings: Mapping[str, Any]) -> str:
     tracker = (settings.get("tracker") or "").strip()
     if not tracker:
-        return f"ticket-sync: no tracker is configured. Set `{TRACKER_SETTING}` to enable sync."
+        return f"issue-sync: no tracker is configured. Set `{TRACKER_SETTING}` to enable sync."
     if not _enabled(settings):
-        return f"ticket-sync: sync is disabled (`{ENABLED_SETTING}` is false). Tracker: {tracker}"
+        return f"issue-sync: sync is disabled (`{ENABLED_SETTING}` is false). Tracker: {tracker}"
 
     links = state.links()
     linked = sum(1 for entry in links.values() if isinstance(entry, dict) and entry.get("card_id"))
@@ -142,9 +142,9 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True) -> None:
     tracker = settings["tracker"]
 
     if not tracker:
-        _log_once(logging.INFO, "ticket-sync: no tracker configured (%s); sync is off", TRACKER_SETTING)
+        _log_once(logging.INFO, "issue-sync: no tracker configured (%s); sync is off", TRACKER_SETTING)
     elif not _enabled(settings):
-        _log_once(logging.INFO, "ticket-sync: sync is disabled by configuration")
+        _log_once(logging.INFO, "issue-sync: sync is disabled by configuration")
     else:
         try:
             adapter = get_adapter(tracker, settings)
@@ -154,24 +154,24 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True) -> None:
             engine = None
             setup_error = f"{type(exc).__name__}: {exc}"
             # Only the exception message is logged, never the settings (they may hold tokens).
-            _log_once(logging.WARNING, "ticket-sync: tracker %r unavailable: %s", tracker, setup_error)
+            _log_once(logging.WARNING, "issue-sync: tracker %r unavailable: %s", tracker, setup_error)
 
-    def tickets_command(raw_args: str = "", **_kwargs: Any) -> str:
+    def issues_command(raw_args: str = "", **_kwargs: Any) -> str:
         sub = (raw_args or "").strip().lower()
         if sub not in ("", "status"):
             return USAGE
         try:
             text = status_text(engine, state, settings)
         except Exception as exc:
-            logger.warning("ticket-sync: status failed: %s: %s", type(exc).__name__, exc)
-            return f"ticket-sync: status unavailable ({type(exc).__name__}: {exc})"
+            logger.warning("issue-sync: status failed: %s: %s", type(exc).__name__, exc)
+            return f"issue-sync: status unavailable ({type(exc).__name__}: {exc})"
         if setup_error:
-            return f"ticket-sync: tracker {tracker!r} could not be started: {setup_error}\n{text}"
+            return f"issue-sync: tracker {tracker!r} could not be started: {setup_error}\n{text}"
         return text
 
     ctx.register_command(
-        "tickets",
-        handler=tickets_command,
+        "issues",
+        handler=issues_command,
         description="Issue tracker sync for kanban cards",
         args_hint="status",
     )
@@ -196,11 +196,11 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True) -> None:
             # into the worker thread; a bare Thread would start with an empty context.
             context = contextvars.copy_context()
             thread = threading.Thread(target=context.run, args=(engine.tick,),
-                                      name="ticket-sync-tick", daemon=True)
+                                      name="issue-sync-tick", daemon=True)
             worker[:] = [thread]
             thread.start()
         except Exception as exc:
-            logger.warning("ticket-sync: dispatch tick failed: %s: %s", type(exc).__name__, exc)
+            logger.warning("issue-sync: dispatch tick failed: %s: %s", type(exc).__name__, exc)
 
     def push_hook(event: str) -> Callable[..., None]:
         def hook(**kwargs: Any) -> None:
@@ -210,7 +210,7 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True) -> None:
                     return
                 engine.push_outbound(str(task_id))
             except Exception as exc:
-                logger.warning("ticket-sync: %s push for %s failed: %s: %s",
+                logger.warning("issue-sync: %s push for %s failed: %s: %s",
                                event, kwargs.get("task_id"), type(exc).__name__, exc)
 
         hook.__name__ = f"on_{event}"

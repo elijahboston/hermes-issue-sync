@@ -1,12 +1,12 @@
 import pytest
 
-from ticket_sync import links
-from ticket_sync.links import Link
+from issue_sync import links
+from issue_sync.links import Link
 
 
 def test_marker_round_trip():
     marker = links.build_marker("linear", "ENG-12", "https://linear.app/x/issue/ENG-12")
-    assert marker == "<!-- ticket-sync tracker=linear key=ENG-12 url=https://linear.app/x/issue/ENG-12 -->"
+    assert marker == "<!-- issue-sync tracker=linear key=ENG-12 url=https://linear.app/x/issue/ENG-12 -->"
     assert links.parse_marker(marker) == Link("linear", "ENG-12", "https://linear.app/x/issue/ENG-12")
 
 
@@ -41,7 +41,7 @@ def test_leading_blank_lines_tolerated():
 
 @pytest.mark.parametrize(
     "body",
-    [None, "", "   \n", "just a card", "<!-- ticket-sync tracker=x -->", "<!-- ticket-sync garbage"],
+    [None, "", "   \n", "just a card", "<!-- issue-sync tracker=x -->", "<!-- issue-sync garbage"],
 )
 def test_garbage_bodies_return_none(body):
     assert links.parse_marker(body) is None
@@ -59,7 +59,7 @@ def test_invalid_tokens_raise(tracker, key):
 
 
 def test_idempotency_key_format():
-    assert links.idempotency_key("linear", "ENG-12") == "ticket-sync:linear:ENG-12"
+    assert links.idempotency_key("linear", "ENG-12") == "issue-sync:linear:ENG-12"
 
 
 def test_card_title_format():
@@ -103,7 +103,7 @@ def test_done_note_and_has_done_note():
     assert not links.has_done_note(None, link)
     assert not links.has_done_note([], link)
     assert links.has_done_note([{"author": links.COMMENT_AUTHOR, "body": note}], link)
-    assert links.has_done_note([{"author": "ticket-sync", "body": f"\n  {note}  \n"}], link)
+    assert links.has_done_note([{"author": "issue-sync", "body": f"\n  {note}  \n"}], link)
 
 
 def test_has_done_note_ignores_other_authors_and_links():
@@ -111,9 +111,9 @@ def test_has_done_note_ignores_other_authors_and_links():
     note = links.done_note(link)
     assert not links.has_done_note([{"author": "alice", "body": note}], link)
     assert not links.has_done_note([{"body": note}], link)
-    assert not links.has_done_note([{"author": "ticket-sync", "body": None}], link)
+    assert not links.has_done_note([{"author": "issue-sync", "body": None}], link)
     other = links.done_note(Link("fake", "K-2"))
-    assert not links.has_done_note([{"author": "ticket-sync", "body": other}], link)
+    assert not links.has_done_note([{"author": "issue-sync", "body": other}], link)
     assert links.has_done_note(
-        [{"author": "alice", "body": "hi"}, {"author": "ticket-sync", "body": note}], link
+        [{"author": "alice", "body": "hi"}, {"author": "issue-sync", "body": note}], link
     )

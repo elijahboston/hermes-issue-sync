@@ -11,9 +11,9 @@ keep it, and people reading the issue can see which comments came from Hermes.
 
 from __future__ import annotations
 
-SIGNATURE = "— via Hermes ticket-sync"
+SIGNATURE = "— via Hermes issue-sync"
 # Matched loosely so tracker markdown rewrites (escaped dashes, italics, extra spaces) still count.
-_NEEDLE = "via hermes ticket-sync"
+_NEEDLE = "via hermes issue-sync"
 
 
 def _last_line(body: str) -> str:

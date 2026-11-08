@@ -3,7 +3,7 @@ import types
 
 import pytest
 
-from ticket_sync.secrets import get_secret
+from issue_sync.secrets import get_secret
 
 
 @pytest.fixture

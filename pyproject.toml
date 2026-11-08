@@ -1,5 +1,5 @@
 [project]
-name = "hermes-ticket-sync"
+name = "hermes-issue-sync"
 version = "0.1.0"
 description = "Hermes Agent plugin: two-way sync between Hermes kanban cards and issue trackers"
 readme = "README.md"

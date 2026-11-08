@@ -1,9 +1,9 @@
 """Two-way blocking (CORE-605): a blocked card's question goes to the tracker issue, and the
 first human reply there unblocks the card with the answer."""
 
-from ticket_sync.adapters.base import AdapterError
-from ticket_sync.links import asked_note, link_from_card
-from ticket_sync.signature import is_signed
+from issue_sync.adapters.base import AdapterError
+from issue_sync.links import asked_note, link_from_card
+from issue_sync.signature import is_signed
 
 from test_engine import Env, linked
 
@@ -27,7 +27,7 @@ def test_blocked_card_posts_signed_question_once():
     assert "> Which database, staging or prod?" in post[2] and is_signed(post[2])
     link = link_from_card(env.kanban.cards[card])
     assert link is not None
-    assert any(c["body"].startswith("ticket-sync: asked on fake issue FAKE-1") for c in env.kanban.comments[card])
+    assert any(c["body"].startswith("issue-sync: asked on fake issue FAKE-1") for c in env.kanban.comments[card])
     assert env.state.link(link.id)["asked_block"]
 
 
@@ -101,7 +101,7 @@ def test_unlinked_and_other_tracker_cards_are_ignored():
     env = Env()
     plain = env.kanban.add_card("no link")
     env.kanban.block(plain, "Q?")
-    other = env.kanban.add_card("jira card", "<!-- ticket-sync tracker=jira key=TSS-1 url= -->\n")
+    other = env.kanban.add_card("jira card", "<!-- issue-sync tracker=jira key=TSS-1 url= -->\n")
     env.kanban.block(other, "Q?")
     assert env.engine.sync_block_questions() == 0
     assert questions(env) == []
@@ -136,5 +136,5 @@ def test_hook_path_handles_blocked_card():
 
 
 def test_asked_note_is_stable():
-    from ticket_sync.links import Link
-    assert asked_note(Link("linear", "CORE-1"), "1:2") == "ticket-sync: asked on linear issue CORE-1 (block 1:2)"
+    from issue_sync.links import Link
+    assert asked_note(Link("linear", "CORE-1"), "1:2") == "issue-sync: asked on linear issue CORE-1 (block 1:2)"

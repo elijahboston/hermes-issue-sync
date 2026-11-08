@@ -3,8 +3,8 @@ import urllib.error
 
 import pytest
 
-from ticket_sync.adapters.base import AdapterError, RateLimited
-from ticket_sync.http import DEFAULT_RETRY_AFTER, HttpError, JsonClient, retry_after
+from issue_sync.adapters.base import AdapterError, RateLimited
+from issue_sync.http import DEFAULT_RETRY_AFTER, HttpError, JsonClient, retry_after
 
 NOW = 1_700_000_000.0
 

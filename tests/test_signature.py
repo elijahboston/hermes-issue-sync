@@ -4,9 +4,9 @@ The plugin posts with the user's own API key, so author checks would mistake the
 replies for the plugin's comments (found in the Linear end-to-end run, CORE-603).
 """
 
-from ticket_sync.adapters.fake import FakeAdapter
-from ticket_sync.adapters.base import Issue
-from ticket_sync.signature import SIGNATURE, is_signed, sign, strip_signature
+from issue_sync.adapters.fake import FakeAdapter
+from issue_sync.adapters.base import Issue
+from issue_sync.signature import SIGNATURE, is_signed, sign, strip_signature
 
 
 def test_sign_appends_signature_as_last_line_once():
@@ -25,10 +25,10 @@ def test_is_signed_only_on_last_line():
 
 
 def test_is_signed_survives_tracker_markdown_rewrites():
-    assert is_signed("done\n\n\\— via Hermes ticket-sync")  # escaped dash
-    assert is_signed("done\n\n*— via Hermes ticket-sync*")  # italics
-    assert is_signed("done\n\n— via  Hermes  ticket-sync   \n\n")  # extra spaces, trailing blanks
-    assert is_signed("done\n\n— VIA HERMES TICKET-SYNC")
+    assert is_signed("done\n\n\\— via Hermes issue-sync")  # escaped dash
+    assert is_signed("done\n\n*— via Hermes issue-sync*")  # italics
+    assert is_signed("done\n\n— via  Hermes  issue-sync   \n\n")  # extra spaces, trailing blanks
+    assert is_signed("done\n\n— VIA HERMES ISSUE-SYNC")
 
 
 def test_strip_signature():

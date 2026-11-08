@@ -11,11 +11,11 @@ from typing import Any, Callable
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PACKAGE = "hermes_ticket_sync"
+PACKAGE = "hermes_issue_sync"
 
 
 def load_plugin():
-    """Import the repo-root ``__init__.py`` as package ``hermes_ticket_sync`` (as Hermes would)."""
+    """Import the repo-root ``__init__.py`` as package ``hermes_issue_sync`` (as Hermes would)."""
     module = sys.modules.get(PACKAGE)
     if module is not None:
         return module
@@ -44,7 +44,7 @@ class StubCtx:
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         load_plugin()
         # The plugin's own module, so isinstance/identity matches what register() uses.
-        memory_store = importlib.import_module(f"{PACKAGE}.ticket_sync.state").MemoryStore
+        memory_store = importlib.import_module(f"{PACKAGE}.issue_sync.state").MemoryStore
         self.config = dict(config or {})
         self.hooks: dict[str, Callable[..., Any]] = {}
         self.commands: dict[str, tuple[Callable[..., Any], dict[str, Any]]] = {}

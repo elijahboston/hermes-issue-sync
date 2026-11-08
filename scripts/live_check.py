@@ -16,7 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ticket_sync.adapters import AdapterError, get_adapter  # noqa: E402
+from issue_sync.adapters import AdapterError, get_adapter  # noqa: E402
 
 DEFAULT_FILTERS = {
     "linear": {"label": "agent", "project": "Ticket Sync Sandbox"},

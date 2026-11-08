@@ -46,7 +46,7 @@ def _state_map(value: Any) -> dict[str, str]:
     }
     ignored = sorted(str(status) for status in value if status not in mapped)
     if ignored:
-        logger.warning("ticket-sync: ignoring state_map entries for %s (keys must be among %s with a "
+        logger.warning("issue-sync: ignoring state_map entries for %s (keys must be among %s with a "
                        "non-empty tracker state)", ", ".join(ignored), ", ".join(sorted(MAPPABLE_STATUSES)))
     return mapped
 
@@ -92,12 +92,12 @@ class SyncEngine:
             if not self._lock.acquire(blocking=False):
                 return False
         except Exception:
-            logger.exception("ticket-sync: could not schedule a sync pass")
+            logger.exception("issue-sync: could not schedule a sync pass")
             return False
         try:
             self._run_pass()
         except Exception:
-            logger.exception("ticket-sync: sync pass failed unexpectedly")
+            logger.exception("issue-sync: sync pass failed unexpectedly")
         finally:
             self._lock.release()
         return True
@@ -118,10 +118,10 @@ class SyncEngine:
             delay = max(exc.retry_after, MIN_BACKOFF)
             self.state.backoff_until = self.clock() + delay
             errors.append(f"{type(exc).__name__}: {_error_text(exc)}")
-            logger.warning("ticket-sync: %s rate limited the sync; backing off %gs", self.adapter.name, delay)
+            logger.warning("issue-sync: %s rate limited the sync; backing off %gs", self.adapter.name, delay)
         except Exception as exc:
             errors.append(f"{type(exc).__name__}: {_error_text(exc)}")
-            logger.warning("ticket-sync: sync pass failed: %s", errors[-1])
+            logger.warning("issue-sync: sync pass failed: %s", errors[-1])
         else:
             if self.state.backoff_until is not None:
                 self.state.backoff_until = None
@@ -136,7 +136,7 @@ class SyncEngine:
             raise
         except Exception as exc:
             errors.append(f"{type(exc).__name__}: {_error_text(exc)}")
-            logger.warning("ticket-sync: %s sync failed: %s", name, errors[-1])
+            logger.warning("issue-sync: %s sync failed: %s", name, errors[-1])
 
     # ── inbound: tracker issues -> kanban cards ───────────────────────────
 
@@ -168,7 +168,7 @@ class SyncEngine:
                 raise
             except Exception as exc:
                 self.state.update_link(link.id, last_error=_error_text(exc))
-                logger.warning("ticket-sync: could not create a card for %s: %s", link.id, _error_text(exc))
+                logger.warning("issue-sync: could not create a card for %s: %s", link.id, _error_text(exc))
                 continue
             self.state.update_link(link.id, card_id=card_id, last_pushed_state=issue.state, last_error=None)
             linked.add(link.id)
@@ -233,7 +233,7 @@ class SyncEngine:
         last_error = "; ".join(errors) or None
         self.state.update_link(link.id, card_id=card_id, last_error=last_error)
         if last_error:
-            logger.warning("ticket-sync: outbound sync failed for %s: %s", link.id, last_error)
+            logger.warning("issue-sync: outbound sync failed for %s: %s", link.id, last_error)
         return moved
 
     def _post_done_summary(self, link: Link, card_id: Any, show: Mapping[str, Any] | None) -> None:
@@ -299,7 +299,7 @@ class SyncEngine:
             raise
         except Exception as exc:
             self.state.update_link(link.id, last_error=_error_text(exc))
-            logger.warning("ticket-sync: blocking sync failed for %s: %s", link.id, _error_text(exc))
+            logger.warning("issue-sync: blocking sync failed for %s: %s", link.id, _error_text(exc))
             return 0
 
     def _ask(self, link: Link, card_id: Any, block_id: str, reason: str, cursor: str | None, note: str) -> int:

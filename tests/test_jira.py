@@ -4,10 +4,10 @@ import urllib.parse
 
 import pytest
 
-from ticket_sync.signature import sign
-from ticket_sync.adapters import get_adapter
-from ticket_sync.adapters.base import AdapterError, Issue, RateLimited, TransitionNotAllowed
-from ticket_sync.adapters.jira import JiraAdapter, build_jql
+from issue_sync.signature import sign
+from issue_sync.adapters import get_adapter
+from issue_sync.adapters.base import AdapterError, Issue, RateLimited, TransitionNotAllowed
+from issue_sync.adapters.jira import JiraAdapter, build_jql
 
 BASE = "https://acme.atlassian.net"
 EMAIL = "bot@example.com"

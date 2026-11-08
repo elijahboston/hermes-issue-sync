@@ -31,7 +31,7 @@ def available_adapters() -> list[str]:
 
 
 def _linear(settings: Mapping[str, Any]) -> TrackerAdapter:
-    # Imported on use: the HTTP adapters import ``ticket_sync.http``, which imports ``.base``.
+    # Imported on use: the HTTP adapters import ``issue_sync.http``, which imports ``.base``.
     from .linear import LinearAdapter
     return LinearAdapter(settings)
 

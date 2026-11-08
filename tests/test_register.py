@@ -1,4 +1,4 @@
-"""register(ctx): hooks, the /tickets command, and status text, against a stub ctx."""
+"""register(ctx): hooks, the /issues command, and status text, against a stub ctx."""
 
 from __future__ import annotations
 
@@ -8,14 +8,14 @@ import threading
 
 import pytest
 
-PACKAGE = "hermes_ticket_sync"
+PACKAGE = "hermes_issue_sync"
 
 HOOKS = {"on_kanban_dispatch_tick", "kanban_task_claimed", "kanban_task_completed", "kanban_task_blocked"}
-TRACKER_SETTING = "plugins.entries.hermes-ticket-sync.settings.tracker"
+TRACKER_SETTING = "plugins.entries.hermes-issue-sync.settings.tracker"
 
 
 def _mod(name: str):
-    return importlib.import_module(f"{PACKAGE}.ticket_sync.{name}")
+    return importlib.import_module(f"{PACKAGE}.issue_sync.{name}")
 
 
 @pytest.fixture
@@ -36,7 +36,7 @@ def make_ctx(plugin, kanban, stub_ctx):
 
 
 def _status(ctx, args: str = "status") -> str:
-    handler, _ = ctx.commands["tickets"]
+    handler, _ = ctx.commands["issues"]
     return handler(args)
 
 
@@ -53,7 +53,7 @@ def _linked_card(kanban, key: str = "FAKE-1", status: str = "running") -> str:
 def test_fake_tracker_registers_hooks_and_command(make_ctx, kanban):
     ctx = make_ctx(tracker="fake")
     assert set(ctx.hooks) == HOOKS
-    handler, kwargs = ctx.commands["tickets"]
+    handler, kwargs = ctx.commands["issues"]
     assert callable(handler)
     assert kwargs["args_hint"] == "status"
     assert kwargs["description"]
@@ -137,7 +137,7 @@ def test_tick_never_raises_when_kanban_fails(make_ctx, kanban):
 def test_unset_tracker_registers_only_command(make_ctx, kanban):
     ctx = make_ctx()
     assert ctx.hooks == {}
-    assert set(ctx.commands) == {"tickets"}
+    assert set(ctx.commands) == {"issues"}
     text = _status(ctx)
     assert "no tracker" in text
     assert TRACKER_SETTING in text
@@ -152,7 +152,7 @@ def test_blank_tracker_counts_as_unset(make_ctx, kanban):
 def test_disabled_registers_only_command(make_ctx, kanban):
     ctx = make_ctx(tracker="fake", enabled=False)
     assert ctx.hooks == {}
-    assert set(ctx.commands) == {"tickets"}
+    assert set(ctx.commands) == {"issues"}
     assert "disabled" in _status(ctx)
 
 
@@ -217,5 +217,5 @@ def test_background_tick_keeps_the_callers_context(plugin, kanban, stub_ctx):
 
     contextvars.Context().run(dispatcher)  # set only in the dispatcher's own context
     assert ran.wait(5)
-    assert seen == [("profile-a", "ticket-sync-tick")]
+    assert seen == [("profile-a", "issue-sync-tick")]
     assert _PROFILE_SCOPE.get() is None

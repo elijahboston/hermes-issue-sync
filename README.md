@@ -1,4 +1,4 @@
-# hermes-ticket-sync
+# hermes-issue-sync
 
 A Hermes Agent plugin that syncs Hermes kanban cards two-way with issue trackers.
 
@@ -14,10 +14,10 @@ Each synced card stores its link on the card itself: the first line of the card 
 is a marker
 
 ```
-<!-- ticket-sync tracker=<tracker> key=<issue_key> url=<url> -->
+<!-- issue-sync tracker=<tracker> key=<issue_key> url=<url> -->
 ```
 
-and the card is created with the idempotency key `ticket-sync:<tracker>:<key>`, so
+and the card is created with the idempotency key `issue-sync:<tracker>:<key>`, so
 repeated or concurrent passes never create duplicate cards.
 
 ## Trackers
@@ -29,7 +29,7 @@ repeated or concurrent passes never create duplicate cards.
 Credentials are read by env-var name through the active Hermes profile's secret scope
 (falling back to the process environment outside Hermes), so put them in the profile's
 `.env`. Settings hold only the *names*; nothing is required at install time. Missing or
-wrong credentials are reported by `/tickets status`.
+wrong credentials are reported by `/issues status`.
 
 | Tracker | Secrets (defaults) | Setting that renames them |
 |---------|--------------------|---------------------------|
@@ -48,7 +48,7 @@ Linear (team Core, project "Ticket Sync Sandbox"):
 ```yaml
 plugins:
   entries:
-    hermes-ticket-sync:
+    hermes-issue-sync:
       settings:
         tracker: linear
         filter:                    # ANDed
@@ -70,7 +70,7 @@ Jira Cloud (project `TSS`, statuses Backlog, Selected for Development, In Progre
 ```yaml
 plugins:
   entries:
-    hermes-ticket-sync:
+    hermes-issue-sync:
       settings:
         tracker: jira
         filter:
@@ -103,7 +103,7 @@ Statuses left out of `state_map` are not pushed to the tracker.
 
 ## Commands
 
-- `/tickets status` — show the tracker, last poll time, backoff, and recent errors.
+- `/issues status` — show the tracker, last poll time, backoff, and recent errors.
 
 ## Development
 
