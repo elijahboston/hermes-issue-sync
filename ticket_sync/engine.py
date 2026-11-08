@@ -14,6 +14,7 @@ import time
 from typing import Any, Callable, Iterable, Mapping
 
 from .adapters.base import RateLimited, TrackerAdapter
+from .signature import sign
 from .links import Link, card_body, card_title, done_note, has_done_note, idempotency_key, link_from_card
 from .state import SyncState
 
@@ -238,7 +239,7 @@ class SyncEngine:
         if not has_done_note(show.get("comments"), link):
             summary = show.get("latest_summary")
             text = summary.strip() if isinstance(summary, str) else ""
-            self.adapter.post_comment(link.key, text or f"Completed by Hermes kanban card {card_id}")
+            self.adapter.post_comment(link.key, sign(text or f"Completed by Hermes kanban card {card_id}"))
             # Recorded before the card note so a failing note never causes a second post here.
             self.state.update_link(link.id, done_comment_posted=True)
             self.kanban.comment(card_id, done_note(link))

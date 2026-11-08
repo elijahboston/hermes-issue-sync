@@ -18,6 +18,7 @@ from typing import Any, Callable, Mapping
 
 from ..http import JsonClient, Transport
 from ..secrets import get_secret
+from ..signature import is_signed
 from . import adf
 from .base import AdapterError, Comment, Issue, TrackerAdapter, TransitionNotAllowed
 
@@ -118,13 +119,13 @@ class JiraAdapter(TrackerAdapter):
 
     def _comment(self, node: Mapping[str, Any]) -> Comment:
         author = node.get("author") or {}
-        account_id = author.get("accountId")
+        body = adf.to_text(node.get("body"))
         return Comment(
             id=str(node.get("id") or ""),
             author=str(author.get("displayName") or author.get("emailAddress") or "unknown"),
-            body=adf.to_text(node.get("body")),
+            body=body,
             created_at=node.get("created"),
-            is_bot=bool(account_id) and account_id == self._myself(),
+            is_bot=is_signed(body),
         )
 
     # -- TrackerAdapter ----------------------------------------------------------------------

@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from ticket_sync.signature import sign
 from ticket_sync.adapters.base import AdapterError, Issue, RateLimited, TransitionNotAllowed
 from ticket_sync.adapters.linear import API_URL, LinearAdapter
 
@@ -76,9 +77,9 @@ def issue_node(n, state="Todo"):
             "state": {"name": state}, "labels": {"nodes": [{"name": "agent"}, {"name": "Bug"}]}}
 
 
-def comment_node(cid, created, user_id="u-human", name="Ada"):
+def comment_node(cid, created, user_id="u-human", name="Ada", body=None):
     user = {"id": user_id, "name": name.lower(), "displayName": name} if user_id else None
-    return {"id": cid, "body": f"comment {cid}", "createdAt": created, "user": user,
+    return {"id": cid, "body": body or f"comment {cid}", "createdAt": created, "user": user,
             "botActor": None if user_id else {"name": "GitHub"}, "externalUser": None}
 
 
@@ -223,17 +224,15 @@ def test_custom_key_env_is_read_at_request_time(monkeypatch):
 
 def test_comments_strictly_newer_oldest_first_across_pages(secret):
     cursor = "2026-11-02T02:56:21.572Z"
-    viewer = step("Viewer", {"viewer": {"id": VIEWER_ID, "name": "Hermes"}})
     t = Transport(
         step("IssueComments", {"issue": {"comments": page([
-            comment_node("c3", "2026-11-02T03:30:00.000Z", VIEWER_ID, "Hermes"),
+            comment_node("c3", "2026-11-02T03:30:00.000Z", VIEWER_ID, "Hermes", sign("done")),
             comment_node("c0", "2026-11-02T02:56:21.572Z"),  # equal to cursor: excluded
         ], "p2")}}, expect={"id": "CORE-7", "filter": {"createdAt": {"gt": cursor}}, "after": None}),
         step("IssueComments", {"issue": {"comments": page([
             comment_node("c2", "2026-11-02T04:00:01+01:00", None),  # 03:00:01Z, offset format
             comment_node("old", "2026-11-01T09:00:00.000Z"),  # older than cursor: excluded
         ])}}, expect={"after": "p2"}),
-        viewer,
         step("IssueComments", {"issue": {"comments": page([comment_node("c4", "2026-11-02T05:00:00.000Z")])}}),
     )
     linear = adapter(t)
@@ -241,7 +240,7 @@ def test_comments_strictly_newer_oldest_first_across_pages(secret):
     assert [c.id for c in comments] == ["c2", "c3"]
     assert new_cursor == "2026-11-02T03:30:00.000Z"
     assert [(c.author, c.is_bot) for c in comments] == [("GitHub", False), ("Hermes", True)]
-    more, newer = linear.list_comments_since("CORE-7", new_cursor)  # viewer is not queried again
+    more, newer = linear.list_comments_since("CORE-7", new_cursor)
     t.done()
     assert [(c.id, c.author, c.is_bot) for c in more] == [("c4", "Ada", False)]
     assert newer == "2026-11-02T05:00:00.000Z"
@@ -282,7 +281,7 @@ def test_check_success_caches_viewer(secret):
                             "or": [{"team": {"key": {"eq": "CORE"}}}, {"team": {"null": True}}]},
             "projectFilter": {"name": {"eq": "Sandbox"}}, "withProject": True,
             "teamFilter": {"key": {"eq": "CORE"}}, "withTeam": True}),
-        step("IssueComments", {"issue": {"comments": page([comment_node("c1", "2026-11-02T03:00:00Z", VIEWER_ID)])}}),
+        step("IssueComments", {"issue": {"comments": page([comment_node("c1", "2026-11-02T03:00:00Z", VIEWER_ID, body=sign("x"))])}}),
     )
     linear = adapter(t, filter={"project": "Sandbox", "team": "CORE"})
     linear.check()

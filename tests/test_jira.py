@@ -4,6 +4,7 @@ import urllib.parse
 
 import pytest
 
+from ticket_sync.signature import sign
 from ticket_sync.adapters import get_adapter
 from ticket_sync.adapters.base import AdapterError, Issue, RateLimited, TransitionNotAllowed
 from ticket_sync.adapters.jira import JiraAdapter, build_jql
@@ -175,7 +176,6 @@ def test_post_comment_sends_adf(secrets):
         step("POST", "/rest/api/3/issue/TSS-1/comment",
              comment_node("c1", "2026-11-07T06:00:00.000+0000", account=ME, name="Bot", text="Done by Hermes"),
              status=201, check=check),
-        step("GET", "/rest/api/3/myself", {"accountId": ME}),
     )
     comment = adapter(t).post_comment("TSS-1", "Done by Hermes\nPR: https://example.com/pr/1")
     t.done()
@@ -186,18 +186,18 @@ def test_list_comments_since_filters_orders_and_flags_bot(secrets):
     nodes = [
         comment_node("c3", "2026-11-07T07:00:00.000+0000", text="newest"),
         comment_node("c1", "2026-11-07T05:00:00.000+0000", text="old"),
-        comment_node("c2", "2026-11-07T06:00:00.000+0000", account=ME, name="Bot", text="mine"),
+        comment_node("c2", "2026-11-07T06:00:00.000+0000", account="acct-human", name="Ada", text=sign("mine")),
     ]
     t = Transport(
         step("GET", "/rest/api/3/issue/TSS-1/comment", {"comments": nodes, "total": 3},
              check=lambda q, b: q["orderBy"] == "created" and q["startAt"] == "0"),
-        step("GET", "/rest/api/3/myself", {"accountId": ME}),
     )
     comments, cursor = adapter(t).list_comments_since("TSS-1", "2026-11-07T05:30:00.000+0000")
     t.done()
     assert [c.id for c in comments] == ["c2", "c3"]
     assert [c.is_bot for c in comments] == [True, False]
     assert comments[1].body == "newest" and comments[1].author == "Ada"
+    assert comments[0].author == "Ada"  # same account as a human: told apart by the signature
     assert cursor == "2026-11-07T07:00:00.000+0000"
 
 

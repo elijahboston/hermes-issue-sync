@@ -15,6 +15,7 @@ from typing import Any, Callable, Mapping
 
 from ..http import JsonClient, Transport, excerpt, retry_after
 from ..secrets import get_secret
+from ..signature import is_signed
 from .base import AdapterError, Comment, Issue, RateLimited, TrackerAdapter, TransitionNotAllowed
 
 API_URL = "https://api.linear.app/graphql"
@@ -82,8 +83,6 @@ query IssueComments($id: String!, $filter: CommentFilter, $first: Int!, $after: 
   }
 }
 """
-
-VIEWER_QUERY = "query Viewer { viewer { id name } }"
 
 CHECK_QUERY = """
 query Check($labelFilter: IssueLabelFilter!, $teamFilter: TeamFilter, $projectFilter: ProjectFilter,
@@ -172,12 +171,6 @@ class LinearAdapter(TrackerAdapter):
             self._team_states[team_id] = states
         return states
 
-    def _viewer(self) -> str:
-        if self._viewer_id is None:
-            viewer = self._graphql(VIEWER_QUERY).get("viewer") or {}
-            self._viewer_id = viewer.get("id") or ""
-        return self._viewer_id
-
     @staticmethod
     def _resolve_state(states: list[dict[str, Any]], target: str) -> dict[str, Any] | None:
         wanted = target.strip().casefold()
@@ -257,7 +250,6 @@ class LinearAdapter(TrackerAdapter):
         fresh = sorted((pair for pair in fresh if since is None or pair[0] > since), key=lambda pair: pair[0])
         if not fresh:
             return [], cursor
-        viewer_id = self._viewer()
         comments = []
         for _, node in fresh:
             user = node.get("user") or {}
@@ -266,7 +258,7 @@ class LinearAdapter(TrackerAdapter):
                       or other.get("name") or "unknown")
             comments.append(Comment(id=node["id"], author=author, body=node.get("body") or "",
                                     created_at=node["createdAt"],
-                                    is_bot=bool(user.get("id")) and user.get("id") == viewer_id))
+                                    is_bot=is_signed(node.get("body"))))
         return comments, comments[-1].created_at
 
     def check(self) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
+from ..signature import is_signed
 from .base import AdapterError, Comment, Issue, TrackerAdapter, TransitionNotAllowed
 
 
@@ -83,7 +84,7 @@ class FakeAdapter(TrackerAdapter):
         self._maybe_fail("post_comment", key)
         self._issue(key)
         self._comment_seq += 1
-        comment = Comment(id=f"c{self._comment_seq}", author="hermes", body=body, is_bot=True)
+        comment = Comment(id=f"c{self._comment_seq}", author="hermes", body=body, is_bot=is_signed(body))
         self.comments.setdefault(key, []).append(comment)
         return comment
 

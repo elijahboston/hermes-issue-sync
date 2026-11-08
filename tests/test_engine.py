@@ -2,6 +2,7 @@ import logging
 
 import pytest
 
+from ticket_sync.signature import sign
 from ticket_sync.adapters.base import AdapterError, RateLimited, TransitionNotAllowed
 from ticket_sync.adapters.fake import FakeAdapter
 from ticket_sync.engine import SyncEngine
@@ -186,7 +187,7 @@ def test_push_outbound_task_id_done_uses_one_show(env):
 
     assert env.engine.push_outbound(card_id) == 1
     assert env.kanban_calls("show_card") == [("show_card", card_id)]
-    assert env.calls("post_comment") == [("post_comment", "FAKE-1", "All green")]
+    assert env.calls("post_comment") == [("post_comment", "FAKE-1", sign("All green"))]
 
 
 def test_rate_limited_propagates_from_direct_calls(env):
@@ -210,7 +211,7 @@ def test_done_posts_latest_summary_once_and_notes_the_card(env):
     env.engine.tick(force=True)
     env.engine.tick(force=True)
 
-    assert env.calls("post_comment") == [("post_comment", "FAKE-1", "Fixed the login redirect.")]
+    assert env.calls("post_comment") == [("post_comment", "FAKE-1", sign("Fixed the login redirect."))]
     assert env.calls("move_issue") == [("move_issue", "FAKE-1", "In Progress"), ("move_issue", "FAKE-1", "Done")]
     note = done_note(Link("fake", "FAKE-1"))
     assert [(c["author"], c["body"]) for c in env.kanban.comments[card_id]] == [("ticket-sync", note)]
@@ -220,7 +221,7 @@ def test_done_posts_latest_summary_once_and_notes_the_card(env):
 def test_done_without_summary_posts_fallback(env):
     (card_id,) = linked(env, "FAKE-1", status="done")
     env.engine.push_outbound()
-    assert env.calls("post_comment") == [("post_comment", "FAKE-1", f"Completed by Hermes kanban card {card_id}")]
+    assert env.calls("post_comment") == [("post_comment", "FAKE-1", sign(f"Completed by Hermes kanban card {card_id}"))]
 
 
 def test_done_note_from_another_process_prevents_posting(env):
@@ -244,7 +245,7 @@ def test_refused_done_transition_still_posts_summary_once():
     env.engine.tick(force=True)
     env.engine.tick(force=True)
 
-    assert env.calls("post_comment") == [("post_comment", "FAKE-1", "Shipped")]
+    assert env.calls("post_comment") == [("post_comment", "FAKE-1", sign("Shipped"))]
     assert len(env.calls("move_issue")) == 2  # the move is retried, the summary is not
     assert "cannot move" in env.state.link("fake:FAKE-1")["last_error"]
 
