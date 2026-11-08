@@ -112,7 +112,7 @@ profile secret scope, so a plain `get_secret` read raises `UnscopedSecretError`.
 binds the scope itself, the plugin binds its own profile's scope around its hooks
 (`issue_sync/secrets.py:ensure_profile_scope`). It mirrors what Hermes's own auto-decompose tick
 does, and it does nothing when Hermes already bound a scope or the gateway serves one profile.
-Upstream report: see the link in the catalog entry.
+Upstream report: https://github.com/NousResearch/hermes-agent/issues/151126
 
 ## Development
 
