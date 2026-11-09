@@ -2,20 +2,26 @@
 // and a badge on synced kanban cards. Data comes from the plugin's own backend
 // (dashboard/plugin_api.py → GET /api/plugins/hermes-issue-sync/status), which only reads the
 // snapshot the gateway writes after each sync pass. No secrets reach this file.
-import {
-  Badge,
-  EmptyState,
-  KANBAN_CARD_AREAS,
-  PALETTE_AREA,
-  PANES_AREA,
-  ScrollArea,
-  STATUSBAR_AREAS,
-  StatusDot,
-  host,
-  relativeTime,
-  useQuery
-} from '@hermes/plugin-sdk'
+// Namespace import on purpose: a named import of something an older Desktop lacks fails the whole
+// file at load ("does not provide an export named …"). Optional surfaces are looked up here and
+// skipped (or replaced by a plain fallback) when absent, so the pane works on older builds too.
+import * as sdk from '@hermes/plugin-sdk'
 import { jsx, jsxs } from 'react/jsx-runtime'
+
+const { host, useQuery } = sdk
+const PANES_AREA = sdk.PANES_AREA ?? 'panes'
+const PALETTE_AREA = sdk.PALETTE_AREA // absent → no ⌘K row
+const STATUSBAR_RIGHT = sdk.STATUSBAR_AREAS?.right ?? 'statusBar.right'
+const KANBAN_BADGES = sdk.KANBAN_CARD_AREAS?.badges // absent on Desktop builds before 2026-10-23
+
+const StatusDot = sdk.StatusDot ?? (() => jsx('span', { children: '•' }))
+const Badge = sdk.Badge ?? (({ children }) => jsx('span', { className: 'rounded border px-1 text-[0.6875rem]', children }))
+const ScrollArea = sdk.ScrollArea ?? (({ children }) => jsx('div', { className: 'h-full overflow-auto', children }))
+const EmptyState =
+  sdk.EmptyState ??
+  (({ title, description }) =>
+    jsxs('div', { className: 'p-3 text-xs', children: [jsx('div', { className: 'font-medium', children: title }), description] }))
+const relativeTime = sdk.relativeTime ?? (ms => new Date(ms).toLocaleString())
 
 const PLUGIN_ID = 'hermes-issue-sync'
 const PANE_ID = `${PLUGIN_ID}:pane`
@@ -186,7 +192,7 @@ export default {
     ctx.onDispose(() => {
       cardIndex = new Map()
     })
-    ctx.registerMany([
+    const contributions = [
       {
         id: 'pane',
         area: PANES_AREA,
@@ -206,13 +212,13 @@ export default {
       },
       {
         id: 'chip',
-        area: STATUSBAR_AREAS.right,
+        area: STATUSBAR_RIGHT,
         order: 140,
         render: () => jsx(StatusChip, { ctx })
       },
       {
         id: 'card-badge',
-        area: KANBAN_CARD_AREAS.badges,
+        area: KANBAN_BADGES,
         data: {
           decorate: card => {
             const hit = cardIndex.get(card.id)
@@ -227,6 +233,8 @@ export default {
           }
         }
       }
-    ])
+    ]
+    // Skip any surface this Desktop build does not have (area undefined).
+    ctx.registerMany(contributions.filter(c => c.area))
   }
 }
