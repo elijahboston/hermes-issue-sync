@@ -74,6 +74,8 @@ class SyncEngine:
         assignee = settings.get("assignee")
         self.assignee: str | None = (assignee.strip() or None) if isinstance(assignee, str) else None
         self.poll_interval = _poll_interval(settings.get("poll_interval_seconds", DEFAULT_POLL_INTERVAL))
+        # Cards of this connection seen by the last full pass; the sync pane reads them.
+        self.last_cards: list[dict[str, Any]] = []
         # Hooks and the dispatcher tick may race; a busy engine skips rather than queueing work.
         self._lock = threading.Lock()
 
@@ -121,6 +123,7 @@ class SyncEngine:
             # recreated; outbound ignores them (``archived`` is not mappable). Cards created by
             # this pass are pushed on the next one.
             cards = self.kanban.list_cards(archived=True)
+            self.last_cards = [c for c in cards if self.owns(link_from_card(c))]
             # Phases are independent: a broken tracker filter must not stop completion summaries.
             self._phase("inbound", errors, self._poll_inbound, cards)
             self._phase("outbound", errors, self._push_outbound, cards)
@@ -323,7 +326,8 @@ class SyncEngine:
         # Move the cursor past everything up to and including the question, so only replies
         # written after it count as answers.
         _, cursor = self.adapter.list_comments_since(link.key, cursor)
-        self.state.update_link(link.id, asked_block=block_id, comment_cursor=cursor, last_error=None)
+        self.state.update_link(link.id, asked_block=block_id, comment_cursor=cursor, last_error=None,
+                               question=question)
         self.kanban.comment(card_id, note)
         return 1
 

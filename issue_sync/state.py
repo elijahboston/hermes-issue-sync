@@ -21,7 +21,7 @@ _LAST_ERROR = "last_error"
 # Per-link fields; unknown fields are rejected so typos fail loudly in tests.
 LINK_FIELDS = frozenset({
     "card_id", "last_pushed_state", "comment_cursor", "done_comment_posted", "last_error",
-    "asked_block", "answered_block",
+    "asked_block", "answered_block", "question",
 })
 
 

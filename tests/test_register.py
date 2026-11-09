@@ -136,7 +136,10 @@ def test_tick_never_raises_when_kanban_fails(make_ctx, kanban):
 
 def test_unset_tracker_registers_only_command(make_ctx, kanban):
     ctx = make_ctx()
-    assert ctx.hooks == {}
+    assert set(ctx.hooks) == HOOKS  # declared hooks always registered; they no-op here
+    ctx.hooks["on_kanban_dispatch_tick"](board="default")
+    ctx.hooks["kanban_task_completed"](task_id="t_x")
+    assert kanban.calls == []
     assert set(ctx.commands) == {"issues"}
     text = _status(ctx)
     assert "nothing is configured" in text
@@ -145,20 +148,22 @@ def test_unset_tracker_registers_only_command(make_ctx, kanban):
 
 def test_blank_tracker_counts_as_unset(make_ctx, kanban):
     ctx = make_ctx(tracker="   ")
-    assert ctx.hooks == {}
+    assert kanban.calls == []
     assert TRACKER_SETTING in _status(ctx)
 
 
 def test_disabled_registers_only_command(make_ctx, kanban):
     ctx = make_ctx(tracker="fake", enabled=False)
-    assert ctx.hooks == {}
+    ctx.hooks["on_kanban_dispatch_tick"](board="default")
+    assert kanban.calls == []
     assert set(ctx.commands) == {"issues"}
     assert "disabled" in _status(ctx)
 
 
 def test_unknown_tracker_reports_error(make_ctx, kanban):
     ctx = make_ctx(tracker="nope", state_map={"done": "Done"})
-    assert ctx.hooks == {}
+    ctx.hooks["on_kanban_dispatch_tick"](board="default")
+    assert kanban.calls == []
     text = _status(ctx)
     assert "unknown tracker 'nope'" in text
     assert "fake" in text  # lists available adapters
