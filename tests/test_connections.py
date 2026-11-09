@@ -195,3 +195,15 @@ def test_hooks_only_tick_connections_on_that_board(plugin, stub_ctx):
 
 def test_adapter_error_type_is_shared():
     assert issubclass(AdapterError, Exception)
+
+
+def test_namespaced_state_keys_follow_hermes_key_rules():
+    """Regression: a '/' prefix was rejected by Hermes' ctx.state in the live gateway."""
+    import pytest
+    store = MemoryStore()
+    with pytest.raises(ValueError):
+        store.set("conn/a/links", {})
+    state = SyncState(store, namespace="linear-sandbox")
+    state.update_link("linear-sandbox:linear:CORE-1", card_id="t_1")
+    state.last_poll_at = 1.0
+    assert set(store.data) == {"conn.linear-sandbox.links", "conn.linear-sandbox.last_poll_at"}

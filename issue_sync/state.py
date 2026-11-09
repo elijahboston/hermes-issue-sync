@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from typing import Any, Protocol
 
 _LINKS = "links"
@@ -32,24 +33,39 @@ class StateStore(Protocol):
     def set(self, key: str, value: Any) -> None: ...
 
 
+# Hermes' rule for ``ctx.state`` keys (hermes_cli/plugins_state.py), mirrored so tests catch bad keys.
+_KEY_RE = re.compile(r"[A-Za-z0-9_.:-]{1,128}")
+
+
+def _check_key(key: str) -> None:
+    if not isinstance(key, str) or not _KEY_RE.fullmatch(key) or ".." in key:
+        raise ValueError(f"invalid plugin state key {key!r}")
+
+
 class MemoryStore:
-    """In-memory ``StateStore`` with ``ctx.state`` semantics (JSON round-trip, copies out)."""
+    """In-memory ``StateStore`` with ``ctx.state`` semantics (JSON round-trip, copies out, key rules)."""
 
     def __init__(self) -> None:
         self.data: dict[str, Any] = {}
 
     def get(self, key: str, default: Any = None) -> Any:
+        _check_key(key)
         return copy.deepcopy(self.data[key]) if key in self.data else default
 
     def set(self, key: str, value: Any) -> None:
+        _check_key(key)
         self.data[key] = json.loads(json.dumps(value))
 
 
 class _Namespaced:
-    """Prefix every key with ``<namespace>/`` so several connections share one ``ctx.state``."""
+    """Prefix every key with ``conn.<namespace>.`` so several connections share one ``ctx.state``.
+
+    Hermes allows only letters, digits, ``_ - . :`` in state keys (no ``..``); connection ids are
+    already limited to ``[a-z0-9_-]``, so the prefixed key stays valid.
+    """
 
     def __init__(self, store: StateStore, namespace: str) -> None:
-        self._store, self._prefix = store, f"{namespace}/"
+        self._store, self._prefix = store, f"conn.{namespace}."
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._store.get(self._prefix + key, default)
