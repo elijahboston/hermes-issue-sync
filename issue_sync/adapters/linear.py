@@ -22,13 +22,14 @@ API_URL = "https://api.linear.app/graphql"
 DEFAULT_KEY_ENV = "LINEAR_API_KEY"
 DEFAULT_LABEL = "agent"
 PAGE_SIZE = 50
+CLOSED_STATE_TYPES = frozenset({"completed", "canceled"})
 
 ISSUES_QUERY = """
 query Issues($filter: IssueFilter!, $first: Int!, $after: String) {
   issues(filter: $filter, first: $first, after: $after) {
     nodes {
       identifier title description url updatedAt
-      state { name }
+      state { name type }
       labels(first: 100) { nodes { name } }
     }
     pageInfo { hasNextPage endCursor }
@@ -204,6 +205,7 @@ class LinearAdapter(TrackerAdapter):
                 state=(node.get("state") or {}).get("name") or "",
                 labels=tuple(label["name"] for label in _nodes(node.get("labels")) if label.get("name")),
                 updated_at=node.get("updatedAt"),
+                closed=(node.get("state") or {}).get("type") in CLOSED_STATE_TYPES,
             )
             for node in nodes
         ]

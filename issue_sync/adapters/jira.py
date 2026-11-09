@@ -153,6 +153,8 @@ class JiraAdapter(TrackerAdapter):
                     state=str((fields.get("status") or {}).get("name") or ""),
                     labels=tuple(str(label) for label in fields.get("labels") or []),
                     updated_at=fields.get("updated"),
+                    # Jira's "done" category covers Done, Closed, Won't Do and any custom final status.
+                    closed=((fields.get("status") or {}).get("statusCategory") or {}).get("key") == "done",
                 ))
             token = data.get("nextPageToken")
             if data.get("isLast", True) or not token:

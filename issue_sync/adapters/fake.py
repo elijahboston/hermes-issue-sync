@@ -34,9 +34,10 @@ class FakeAdapter(TrackerAdapter):
     # ── test helpers ──────────────────────────────────────────────────────
 
     def add_issue(self, key: str, title: str = "", *, body: str = "", state: str = "Todo",
-                  url: str | None = None, labels: Iterable[str] = (), updated_at: str | None = None) -> Issue:
+                  url: str | None = None, labels: Iterable[str] = (), updated_at: str | None = None,
+                  closed: bool = False) -> Issue:
         issue = Issue(key=key, title=title or key, body=body, url=url if url is not None else f"https://fake.invalid/{key}",
-                      state=state, labels=tuple(labels), updated_at=updated_at)
+                      state=state, labels=tuple(labels), updated_at=updated_at, closed=closed)
         self.issues[key] = issue
         return issue
 

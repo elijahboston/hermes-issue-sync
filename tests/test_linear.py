@@ -71,10 +71,10 @@ def move(state_id):
                 expect={"id": ISSUE_UUID, "stateId": state_id})
 
 
-def issue_node(n, state="Todo"):
+def issue_node(n, state="Todo", state_type="unstarted"):
     return {"identifier": f"CORE-{n}", "title": f"Issue {n}", "description": None if n % 2 else f"Body {n}",
             "url": f"https://linear.app/acme/issue/CORE-{n}/issue-{n}", "updatedAt": "2026-11-06T06:27:53.660Z",
-            "state": {"name": state}, "labels": {"nodes": [{"name": "agent"}, {"name": "Bug"}]}}
+            "state": {"name": state, "type": state_type}, "labels": {"nodes": [{"name": "agent"}, {"name": "Bug"}]}}
 
 
 def comment_node(cid, created, user_id="u-human", name="Ada", body=None):
@@ -312,3 +312,11 @@ def test_check_project_missing(secret):
 
 def test_name():
     assert LinearAdapter({}).name == "linear"
+
+
+def test_fetch_issues_marks_completed_and_canceled_as_closed(secret):
+    t = Transport(step("issues(", {"issues": page([
+        issue_node(1, "Todo", "unstarted"), issue_node(2, "Shipped", "completed"),
+        issue_node(3, "Won't fix", "canceled"), issue_node(4, "In Progress", "started")])}))
+    issues = adapter(t).fetch_issues({})
+    assert [i.closed for i in issues] == [False, True, True, False]

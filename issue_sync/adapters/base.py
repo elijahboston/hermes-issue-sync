@@ -16,6 +16,7 @@ class Issue:
     state: str
     labels: tuple[str, ...] = ()
     updated_at: str | None = None  # ISO-8601, as reported by the tracker
+    closed: bool = False  # finished or canceled, by the tracker's status type (not its name)
 
 
 @dataclass(frozen=True)

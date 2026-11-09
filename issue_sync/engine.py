@@ -155,7 +155,8 @@ class SyncEngine:
         created = 0
         for issue in self.adapter.fetch_issues(self.filter):
             link = Link(tracker, issue.key, issue.url)
-            if link.id in linked:
+            # A finished issue never needs a worker; a card would only invite one to redo it.
+            if link.id in linked or issue.closed:
                 continue
             try:
                 card_id = self.kanban.create_card(

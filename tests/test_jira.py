@@ -58,9 +58,9 @@ def adapter(transport, **settings):
     return JiraAdapter(settings, transport=transport, clock=lambda: NOW)
 
 
-def issue_node(n, status="Backlog", description=None):
+def issue_node(n, status="Backlog", description=None, category="new"):
     return {"key": f"TSS-{n}", "fields": {
-        "summary": f"Issue {n}", "description": description, "status": {"name": status},
+        "summary": f"Issue {n}", "description": description, "status": {"name": status, "statusCategory": {"key": category}},
         "labels": ["agent"], "updated": "2026-11-07T05:41:08.540+0000"}}
 
 
@@ -269,3 +269,11 @@ def test_custom_env_names(monkeypatch):
 
 def test_registry_builds_jira_adapter():
     assert get_adapter("jira", {}).name == "jira"
+
+
+def test_fetch_issues_marks_done_category_as_closed(secrets):
+    t = Transport(step("POST", "/rest/api/3/search/jql", {"isLast": True, "issues": [
+        issue_node(1, "Backlog", category="new"), issue_node(2, "In Progress", category="indeterminate"),
+        issue_node(3, "Done", category="done"), issue_node(4, "Won't Do", category="done")]}))
+    issues = adapter(t).fetch_issues({"project": "TSS"})
+    assert [i.closed for i in issues] == [False, False, True, True]

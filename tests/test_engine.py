@@ -402,3 +402,21 @@ def test_bad_filter_and_state_map_are_ignored():
 def test_state_map_drops_unknown_statuses_and_blank_targets():
     env = Env(state_map={"running": "Doing", "todo": "Todo", "review": "", "done": 3})
     assert env.engine.state_map == {"running": "Doing"}
+
+
+def test_inbound_skips_closed_issues():
+    env = Env()
+    env.adapter.add_issue("FAKE-1", "open one")
+    env.adapter.add_issue("FAKE-2", "finished one", state="Done", closed=True)
+    assert env.engine.poll_inbound() == 1
+    titles = [c["title"] for c in env.kanban.cards.values()]
+    assert any("FAKE-1" in t for t in titles) and not any("FAKE-2" in t for t in titles)
+
+
+def test_closed_issue_with_a_card_still_syncs_outbound():
+    env = Env()
+    (card,) = linked(env, "FAKE-1")
+    env.adapter.add_issue("FAKE-1", "Issue FAKE-1", state="Done", closed=True)  # closed on the tracker
+    env.kanban.set_status(card, "done")
+    env.engine.push_outbound()
+    assert any(c[0] == "post_comment" and c[1] == "FAKE-1" for c in env.adapter.calls)
