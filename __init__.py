@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Mapping
 
 from .issue_sync.adapters import get_adapter
+from .issue_sync.connections import Connection, parse_connections
 from .issue_sync.engine import SyncEngine
 from .issue_sync.kanban import KanbanClient
 from .issue_sync.secrets import ensure_profile_scope
@@ -22,6 +23,7 @@ from .issue_sync.state import SyncState
 logger = logging.getLogger(__name__)
 
 TRACKER_SETTING = "plugins.entries.hermes-issue-sync.settings.tracker"
+CONNECTIONS_SETTING = "plugins.entries.hermes-issue-sync.settings.connections"
 ENABLED_SETTING = "plugins.entries.hermes-issue-sync.settings.enabled"
 HOOKS = ("on_kanban_dispatch_tick", "kanban_task_claimed", "kanban_task_completed", "kanban_task_blocked")
 USAGE = "usage: /issues status"
@@ -34,6 +36,7 @@ _DEFAULTS: dict[str, Any] = {
     "board": "",
     "poll_interval_seconds": 60,
     "enabled": True,
+    "connections": [],
     # Adapter credentials: names of the env vars / profile secrets to read, never the values.
     "api_key_env": "LINEAR_API_KEY",
     "base_url_env": "JIRA_BASE_URL",
@@ -64,6 +67,9 @@ def _read_settings(ctx: Any) -> dict[str, Any]:
             _log_once(logging.WARNING, "issue-sync: setting %r must be a mapping; ignoring it", key)
             settings[key] = {}
         settings[key] = dict(settings[key])
+    if not isinstance(settings["connections"], list):
+        _log_once(logging.WARNING, "issue-sync: setting 'connections' must be a list; ignoring it")
+        settings["connections"] = []
     return settings
 
 
@@ -105,23 +111,30 @@ def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="seconds")
 
 
-def status_text(engine_or_none: Any, state: SyncState, settings: Mapping[str, Any]) -> str:
-    tracker = (settings.get("tracker") or "").strip()
-    if not tracker:
-        return f"issue-sync: no tracker is configured. Set `{TRACKER_SETTING}` to enable sync."
-    if not _enabled(settings):
-        return f"issue-sync: sync is disabled (`{ENABLED_SETTING}` is false). Tracker: {tracker}"
+class _Runner:
+    """One connection's engine, its state, and its background tick thread."""
 
+    def __init__(self, conn: Connection, engine: Any, state: SyncState, error: str | None) -> None:
+        self.conn, self.engine, self.state, self.error = conn, engine, state, error
+        self.worker: threading.Thread | None = None
+
+
+def _connection_lines(runner: _Runner) -> list[str]:
+    conn, state = runner.conn, runner.state
+    settings = conn.settings
+    lines = [f"tracker: {conn.tracker or '?'}"]
+    if conn.projects:
+        lines.append("projects: " + ", ".join(conn.projects))
+    lines.append(f"board: {settings.get('board') or 'default'}")
+    if runner.error:
+        lines.append(f"error: {runner.error}")
+        return lines
     links = state.links()
     linked = sum(1 for entry in links.values() if isinstance(entry, dict) and entry.get("card_id"))
     last_poll = state.last_poll_at
-    lines = [
-        f"tracker: {tracker}",
-        f"board: {settings.get('board') or 'default'}",
-        f"linked cards: {linked}",
-        f"last poll: {_iso(last_poll) if last_poll is not None else 'never'}",
-    ]
-    if engine_or_none is None:
+    lines += [f"linked cards: {linked}",
+              f"last poll: {_iso(last_poll) if last_poll is not None else 'never'}"]
+    if runner.engine is None:
         lines.insert(1, "engine: not running in this process")
     backoff = state.backoff_until
     if backoff is not None and backoff > time.time():
@@ -138,43 +151,75 @@ def status_text(engine_or_none: Any, state: SyncState, settings: Mapping[str, An
         lines.extend(errors)
     else:
         lines.append("link errors: no errors")
-    return "\n".join(lines)
+    return lines
+
+
+def status_text(runners: list[_Runner], settings: Mapping[str, Any]) -> str:
+    if not runners:
+        return (f"issue-sync: nothing is configured. Set `{CONNECTIONS_SETTING}` "
+                f"(or `{TRACKER_SETTING}` for a single tracker) to enable sync.")
+    if not _enabled(settings):
+        names = ", ".join(r.conn.name for r in runners)
+        return f"issue-sync: sync is disabled (`{ENABLED_SETTING}` is false). Connections: {names}"
+    if len(runners) == 1 and not runners[0].conn.id:
+        return "\n".join(_connection_lines(runners[0]))
+    blocks = []
+    for runner in runners:
+        body = "\n".join("  " + line for line in _connection_lines(runner))
+        blocks.append(f"connection {runner.conn.name}:\n{body}")
+    return "\n".join(blocks)
+
+
+def _build_runners(ctx: Any, settings: Mapping[str, Any], kanban: Any) -> list[_Runner]:
+    runners: list[_Runner] = []
+    store = _CtxStateStore(ctx)
+    legacy_owner: set[str] = set()
+    clients: dict[str, Any] = {}
+    for conn in parse_connections(settings):
+        state = SyncState(store, namespace=conn.id)
+        if conn.error:
+            _log_once(logging.WARNING, "issue-sync: connection %s skipped: %s", conn.name, conn.error)
+            runners.append(_Runner(conn, None, state, conn.error))
+            continue
+        try:
+            adapter = get_adapter(conn.tracker, conn.settings)
+            board = conn.board
+            client = kanban if kanban is not None else clients.setdefault(board, KanbanClient(board or None))
+            # Cards made before connections existed go to the first connection on their tracker.
+            owns_legacy = conn.tracker not in legacy_owner
+            legacy_owner.add(conn.tracker)
+            engine = SyncEngine(adapter, client, state, conn.settings, conn=conn.id, owns_legacy=owns_legacy)
+            runners.append(_Runner(conn, engine, state, None))
+        except Exception as exc:  # one bad connection must not stop the others or Hermes startup
+            error = f"{type(exc).__name__}: {exc}"
+            # Only the exception message is logged, never the settings (they may hold tokens).
+            _log_once(logging.WARNING, "issue-sync: connection %s (%s) unavailable: %s",
+                      conn.name, conn.tracker, error)
+            runners.append(_Runner(conn, None, state, error))
+    return runners
 
 
 def register(ctx: Any, *, kanban: Any = None, background: bool = True) -> None:
     settings = _read_settings(ctx)
-    state = SyncState(_CtxStateStore(ctx))
-    engine: Any = None
-    setup_error: str | None = None
-    tracker = settings["tracker"]
-
-    if not tracker:
-        _log_once(logging.INFO, "issue-sync: no tracker configured (%s); sync is off", TRACKER_SETTING)
-    elif not _enabled(settings):
+    runners: list[_Runner] = []
+    if not _enabled(settings):
+        runners = [_Runner(conn, None, SyncState(_CtxStateStore(ctx), namespace=conn.id), None)
+                   for conn in parse_connections(settings)]
         _log_once(logging.INFO, "issue-sync: sync is disabled by configuration")
     else:
-        try:
-            adapter = get_adapter(tracker, settings)
-            client = kanban if kanban is not None else KanbanClient(settings["board"] or None)
-            engine = SyncEngine(adapter, client, state, settings)
-        except Exception as exc:  # a bad tracker config must not break Hermes startup
-            engine = None
-            setup_error = f"{type(exc).__name__}: {exc}"
-            # Only the exception message is logged, never the settings (they may hold tokens).
-            _log_once(logging.WARNING, "issue-sync: tracker %r unavailable: %s", tracker, setup_error)
+        runners = _build_runners(ctx, settings, kanban)
+        if not runners:
+            _log_once(logging.INFO, "issue-sync: no connections configured (%s); sync is off", CONNECTIONS_SETTING)
 
     def issues_command(raw_args: str = "", **_kwargs: Any) -> str:
         sub = (raw_args or "").strip().lower()
         if sub not in ("", "status"):
             return USAGE
         try:
-            text = status_text(engine, state, settings)
+            return status_text(runners, settings)
         except Exception as exc:
             logger.warning("issue-sync: status failed: %s: %s", type(exc).__name__, exc)
             return f"issue-sync: status unavailable ({type(exc).__name__}: {exc})"
-        if setup_error:
-            return f"issue-sync: tracker {tracker!r} could not be started: {setup_error}\n{text}"
-        return text
 
     ctx.register_command(
         "issues",
@@ -183,42 +228,51 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True) -> None:
         args_hint="status",
     )
 
-    if engine is None:
+    live = [r for r in runners if r.engine is not None]
+    if not live:
         return
 
-    worker: list[threading.Thread] = []
+    def tick(runner: _Runner) -> None:
+        engine = runner.engine
+        if not engine.due():
+            return
+        if not background:
+            _scoped(engine.tick)
+            return
+        if runner.worker is not None and runner.worker.is_alive():
+            return
+        # The copied context carries the profile's secret scope (and any other ContextVar)
+        # into the worker thread; a bare Thread would start with an empty context.
+        context = contextvars.copy_context()
+        thread = threading.Thread(target=context.run, args=(_scoped, engine.tick),
+                                  name=f"issue-sync-tick-{runner.conn.name}", daemon=True)
+        runner.worker = thread
+        thread.start()
 
     def on_dispatch_tick(**kwargs: Any) -> None:
-        try:
-            if kwargs.get("dry_run") or not _board_matches(settings, kwargs):
-                return
-            if not engine.due():
-                return
-            if not background:
-                _scoped(engine.tick)
-                return
-            if worker and worker[0].is_alive():
-                return
-            # The copied context carries the profile's secret scope (and any other ContextVar)
-            # into the worker thread; a bare Thread would start with an empty context.
-            context = contextvars.copy_context()
-            thread = threading.Thread(target=context.run, args=(_scoped, engine.tick),
-                                      name="issue-sync-tick", daemon=True)
-            worker[:] = [thread]
-            thread.start()
-        except Exception as exc:
-            logger.warning("issue-sync: dispatch tick failed: %s: %s", type(exc).__name__, exc)
+        if kwargs.get("dry_run"):
+            return
+        for runner in live:
+            try:
+                if _board_matches(runner.conn.settings, kwargs):
+                    tick(runner)
+            except Exception as exc:
+                logger.warning("issue-sync: dispatch tick failed for %s: %s: %s",
+                               runner.conn.name, type(exc).__name__, exc)
 
     def push_hook(event: str) -> Callable[..., None]:
         def hook(**kwargs: Any) -> None:
-            try:
-                task_id = kwargs.get("task_id")
-                if not task_id or not _board_matches(settings, kwargs):
-                    return
-                _scoped(engine.push_outbound, str(task_id))
-            except Exception as exc:
-                logger.warning("issue-sync: %s push for %s failed: %s: %s",
-                               event, kwargs.get("task_id"), type(exc).__name__, exc)
+            task_id = kwargs.get("task_id")
+            if not task_id:
+                return
+            for runner in live:
+                try:
+                    if _board_matches(runner.conn.settings, kwargs):
+                        # Each engine ignores cards that belong to another connection.
+                        _scoped(runner.engine.push_outbound, str(task_id))
+                except Exception as exc:
+                    logger.warning("issue-sync: %s push for %s (%s) failed: %s: %s", event,
+                                   task_id, runner.conn.name, type(exc).__name__, exc)
 
         hook.__name__ = f"on_{event}"
         return hook

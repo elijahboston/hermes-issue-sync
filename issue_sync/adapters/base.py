@@ -28,6 +28,21 @@ class Comment:
     is_bot: bool = False
 
 
+def filter_projects(filter: Mapping[str, Any] | None) -> list[str]:
+    """Projects named by a filter: ``projects`` (list) and/or a single ``project``."""
+    filter = filter or {}
+    value = filter.get("projects")
+    items = list(value) if isinstance(value, (list, tuple)) else ([value] if value else [])
+    if filter.get("project"):
+        items.insert(0, filter["project"])
+    out: list[str] = []
+    for item in items:
+        text = str(item).strip()
+        if text and text not in out:
+            out.append(text)
+    return out
+
+
 class AdapterError(Exception):
     """A tracker call failed. ``str(exc)`` is shown to users: keep it human, never include secrets."""
 

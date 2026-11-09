@@ -20,7 +20,7 @@ from ..http import JsonClient, Transport
 from ..secrets import get_secret
 from ..signature import is_signed
 from . import adf
-from .base import AdapterError, Comment, Issue, TrackerAdapter, TransitionNotAllowed
+from .base import AdapterError, Comment, Issue, TrackerAdapter, TransitionNotAllowed, filter_projects
 
 DEFAULT_BASE_URL_ENV = "JIRA_BASE_URL"
 DEFAULT_EMAIL_ENV = "JIRA_EMAIL"
@@ -53,8 +53,11 @@ def build_jql(filter: Mapping[str, Any]) -> str:
     if raw:
         return raw
     clauses = []
-    if filter.get("project"):
-        clauses.append(f"project = {_jql_string(filter['project'])}")
+    projects = filter_projects(filter)
+    if len(projects) == 1:
+        clauses.append(f"project = {_jql_string(projects[0])}")
+    elif projects:
+        clauses.append("project in (" + ", ".join(_jql_string(p) for p in projects) + ")")
     clauses.append(f"labels = {_jql_string(filter.get('label') or DEFAULT_LABEL)}")
     return " AND ".join(clauses) + " ORDER BY created ASC"
 
@@ -205,8 +208,7 @@ class JiraAdapter(TrackerAdapter):
     def check(self) -> None:
         if not self._myself():
             raise AdapterError("jira: could not identify the API token's account; check JIRA_EMAIL and JIRA_API_TOKEN")
-        project = str((self._settings.get("filter") or {}).get("project") or "")
-        if project:
+        for project in filter_projects(self._settings.get("filter")):
             path = f"/rest/api/3/project/{urllib.parse.quote(project, safe='')}"
             if self._request("GET", path, allow_statuses=(404,)).status == 404:
                 raise AdapterError(f"jira: project {project!r} not found (or no permission to browse it)")

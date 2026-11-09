@@ -139,7 +139,7 @@ def test_unset_tracker_registers_only_command(make_ctx, kanban):
     assert ctx.hooks == {}
     assert set(ctx.commands) == {"issues"}
     text = _status(ctx)
-    assert "no tracker" in text
+    assert "nothing is configured" in text
     assert TRACKER_SETTING in text
 
 
@@ -217,5 +217,5 @@ def test_background_tick_keeps_the_callers_context(plugin, kanban, stub_ctx):
 
     contextvars.Context().run(dispatcher)  # set only in the dispatcher's own context
     assert ran.wait(5)
-    assert seen == [("profile-a", "issue-sync-tick")]
+    assert seen == [("profile-a", "issue-sync-tick-fake")]
     assert _PROFILE_SCOPE.get() is None

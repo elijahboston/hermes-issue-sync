@@ -320,3 +320,19 @@ def test_fetch_issues_marks_completed_and_canceled_as_closed(secret):
         issue_node(3, "Won't fix", "canceled"), issue_node(4, "In Progress", "started")])}))
     issues = adapter(t).fetch_issues({})
     assert [i.closed for i in issues] == [False, True, True, False]
+
+
+def test_fetch_issues_with_several_projects_uses_one_in_filter(secret):
+    t = Transport(step("issues(", {"issues": page([])}, expect={"filter": {
+        "labels": {"some": {"name": {"eqIgnoreCase": "agent"}}},
+        "project": {"name": {"in": ["Sandbox", "Issue Sync"]}}}}))
+    assert adapter(t).fetch_issues({"projects": ["Sandbox", "Issue Sync"]}) == []
+    t.done()
+
+
+def test_check_names_each_missing_project(secret):
+    data = check_data(projects=None)
+    data["projects"] = page([{"id": "p", "name": "Sandbox"}])
+    t = Transport(step("Check", data))
+    with pytest.raises(AdapterError, match=r"project 'Nope' not found"):
+        adapter(t, filter={"projects": ["Sandbox", "Nope"]}).check()

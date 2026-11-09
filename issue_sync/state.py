@@ -45,9 +45,24 @@ class MemoryStore:
         self.data[key] = json.loads(json.dumps(value))
 
 
+class _Namespaced:
+    """Prefix every key with ``<namespace>/`` so several connections share one ``ctx.state``."""
+
+    def __init__(self, store: StateStore, namespace: str) -> None:
+        self._store, self._prefix = store, f"{namespace}/"
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._store.get(self._prefix + key, default)
+
+    def set(self, key: str, value: Any) -> None:
+        self._store.set(self._prefix + key, value)
+
+
 class SyncState:
-    def __init__(self, store: StateStore | None = None) -> None:
-        self._store: StateStore = store if store is not None else MemoryStore()
+    def __init__(self, store: StateStore | None = None, namespace: str = "") -> None:
+        store = store if store is not None else MemoryStore()
+        # "" keeps the original un-prefixed keys, so a single-tracker setup keeps its history.
+        self._store: StateStore = _Namespaced(store, namespace) if namespace else store
 
     # ── per link (keyed by Link.id = "<tracker>:<issue_key>") ─────────────
 

@@ -16,7 +16,7 @@ from typing import Any, Callable, Mapping
 from ..http import JsonClient, Transport, excerpt, retry_after
 from ..secrets import get_secret
 from ..signature import is_signed
-from .base import AdapterError, Comment, Issue, RateLimited, TrackerAdapter, TransitionNotAllowed
+from .base import AdapterError, Comment, Issue, RateLimited, TrackerAdapter, TransitionNotAllowed, filter_projects
 
 API_URL = "https://api.linear.app/graphql"
 DEFAULT_KEY_ENV = "LINEAR_API_KEY"
@@ -91,9 +91,13 @@ query Check($labelFilter: IssueLabelFilter!, $teamFilter: TeamFilter, $projectFi
   viewer { id name }
   issueLabels(filter: $labelFilter, first: 1) { nodes { id } }
   teams(filter: $teamFilter, first: 1) @include(if: $withTeam) { nodes { id } }
-  projects(filter: $projectFilter, first: 1) @include(if: $withProject) { nodes { id } }
+  projects(filter: $projectFilter, first: 50) @include(if: $withProject) { nodes { id name } }
 }
 """
+
+
+def _project_filter(projects: list[str]) -> dict[str, Any]:
+    return {"name": {"eq": projects[0]}} if len(projects) == 1 else {"name": {"in": projects}}
 
 
 def _parse_time(value: str) -> datetime:
@@ -191,8 +195,9 @@ class LinearAdapter(TrackerAdapter):
         filter = filter or {}
         issue_filter: dict[str, Any] = {
             "labels": {"some": {"name": {"eqIgnoreCase": str(filter.get("label") or DEFAULT_LABEL)}}}}
-        if filter.get("project"):
-            issue_filter["project"] = {"name": {"eq": str(filter["project"])}}
+        projects = filter_projects(filter)
+        if projects:
+            issue_filter["project"] = _project_filter(projects)
         if filter.get("team"):
             issue_filter["team"] = {"key": {"eq": str(filter["team"])}}
         nodes = self._paginate(ISSUES_QUERY, {"filter": issue_filter}, lambda data: data.get("issues"))
@@ -267,15 +272,15 @@ class LinearAdapter(TrackerAdapter):
         filter = self._settings.get("filter") or {}
         label = str(filter.get("label") or DEFAULT_LABEL)
         team = str(filter.get("team") or "")
-        project = str(filter.get("project") or "")
+        projects = filter_projects(filter)
         label_filter: dict[str, Any] = {"name": {"eqIgnoreCase": label}}
         if team:  # the team's own labels or workspace-wide ones
             label_filter["or"] = [{"team": {"key": {"eq": team}}}, {"team": {"null": True}}]
         data = self._graphql(CHECK_QUERY, {
             "labelFilter": label_filter,
             "teamFilter": {"key": {"eq": team}} if team else None,
-            "projectFilter": {"name": {"eq": project}} if project else None,
-            "withTeam": bool(team), "withProject": bool(project),
+            "projectFilter": _project_filter(projects) if projects else None,
+            "withTeam": bool(team), "withProject": bool(projects),
         })
         viewer_id = (data.get("viewer") or {}).get("id")
         if not viewer_id:
@@ -285,5 +290,8 @@ class LinearAdapter(TrackerAdapter):
             raise AdapterError(f"linear: team {team!r} not found")
         if not _nodes(data.get("issueLabels")):
             raise AdapterError(f"linear: label {label!r} not found" + (f" in team {team!r}" if team else ""))
-        if project and not _nodes(data.get("projects")):
-            raise AdapterError(f"linear: project {project!r} not found")
+        found = _nodes(data.get("projects"))
+        names = {node.get("name") for node in found if node.get("name")}
+        missing = [p for p in projects if p not in names] if names else (projects if not found else [])
+        if missing:
+            raise AdapterError("linear: project " + ", ".join(repr(p) for p in missing) + " not found")

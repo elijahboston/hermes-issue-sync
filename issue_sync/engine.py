@@ -57,9 +57,14 @@ def _error_text(exc: BaseException) -> str:
 
 class SyncEngine:
     def __init__(self, adapter: TrackerAdapter, kanban: Any, state: SyncState,
-                 settings: Mapping[str, Any] | None, clock: Callable[[], float] = time.time) -> None:
+                 settings: Mapping[str, Any] | None, clock: Callable[[], float] = time.time,
+                 *, conn: str = "", owns_legacy: bool = False) -> None:
         settings = settings if isinstance(settings, Mapping) else {}
         self.adapter = adapter
+        # Connection id written into new card markers; "" for the single-tracker setup.
+        self.conn = conn
+        # Also handle cards made before connections existed (markers without ``conn=``).
+        self.owns_legacy = owns_legacy or not conn
         self.kanban = kanban
         self.state = state
         self.clock = clock
@@ -71,6 +76,12 @@ class SyncEngine:
         self.poll_interval = _poll_interval(settings.get("poll_interval_seconds", DEFAULT_POLL_INTERVAL))
         # Hooks and the dispatcher tick may race; a busy engine skips rather than queueing work.
         self._lock = threading.Lock()
+
+    def owns(self, link: Link | None) -> bool:
+        """Whether a card's link belongs to this engine's connection."""
+        if link is None or link.tracker != self.adapter.name:
+            return False
+        return link.conn == self.conn or (not link.conn and self.owns_legacy)
 
     # ── scheduling ────────────────────────────────────────────────────────
 
@@ -151,18 +162,18 @@ class SyncEngine:
 
     def _poll_inbound(self, cards: Iterable[Mapping[str, Any]]) -> int:
         tracker = self.adapter.name
-        linked = {link.id for link in map(link_from_card, cards) if link is not None and link.tracker == tracker}
+        linked = {link.key for link in map(link_from_card, cards) if self.owns(link)}
         created = 0
         for issue in self.adapter.fetch_issues(self.filter):
-            link = Link(tracker, issue.key, issue.url)
+            link = Link(tracker, issue.key, issue.url, self.conn)
             # A finished issue never needs a worker; a card would only invite one to redo it.
-            if link.id in linked or issue.closed:
+            if issue.key in linked or issue.closed:
                 continue
             try:
                 card_id = self.kanban.create_card(
                     card_title(issue.key, issue.title),
-                    card_body(tracker, issue.key, issue.url, issue.body),
-                    idempotency_key=idempotency_key(tracker, issue.key),
+                    card_body(tracker, issue.key, issue.url, issue.body, self.conn),
+                    idempotency_key=idempotency_key(tracker, issue.key, self.conn),
                     assignee=self.assignee,
                 )
             except RateLimited:
@@ -172,7 +183,7 @@ class SyncEngine:
                 logger.warning("issue-sync: could not create a card for %s: %s", link.id, _error_text(exc))
                 continue
             self.state.update_link(link.id, card_id=card_id, last_pushed_state=issue.state, last_error=None)
-            linked.add(link.id)
+            linked.add(issue.key)
             created += 1
         return created
 
@@ -202,7 +213,7 @@ class SyncEngine:
 
     def _push_card(self, card: Mapping[str, Any], show: Mapping[str, Any] | None = None) -> int:
         link = link_from_card(card)
-        if link is None or link.tracker != self.adapter.name:
+        if link is None or not self.owns(link):
             return 0
         status = card.get("status")
         target = self.state_map.get(status) if isinstance(status, str) else None
@@ -277,7 +288,7 @@ class SyncEngine:
 
     def _sync_block_card(self, card: Mapping[str, Any], show: Mapping[str, Any] | None = None) -> int:
         link = link_from_card(card)
-        if link is None or link.tracker != self.adapter.name:
+        if link is None or not self.owns(link):
             return 0
         card_id = card.get("id")
         try:
