@@ -205,7 +205,7 @@ _snapshot_lock = threading.Lock()
 
 
 def show_pane(broadcast: Callable[..., None] | None = None) -> str:
-    """Ask every connected Desktop window to open the Issue Sync pane."""
+    """Ask every connected Desktop window to toggle the Issue Sync panel."""
     try:
         if broadcast is None:
             from hermes_cli.plugin_events import broadcast_plugin_event as broadcast  # documented
@@ -213,7 +213,7 @@ def show_pane(broadcast: Callable[..., None] | None = None) -> str:
     except Exception as exc:
         return (f"issue-sync: could not reach Desktop ({type(exc).__name__}: {exc}). "
                 "Open the pane from the Issue Sync chip in the status bar.")
-    return ("issue-sync: asked Desktop to open the Issue Sync pane. If nothing opens, check that "
+    return ("issue-sync: asked Desktop to toggle the Issue Sync panel. If nothing happens, check that "
             "Issue Sync is turned on in Capabilities → Plugins (the Desktop half), then click the "
             "Issue Sync chip in the status bar.")
 

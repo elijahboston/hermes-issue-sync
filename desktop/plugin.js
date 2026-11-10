@@ -193,9 +193,38 @@ function StatusChip({ ctx }) {
     type: 'button',
     className: 'flex items-center gap-1 px-1.5 text-[0.6875rem] text-(--ui-text-tertiary)',
     title,
-    onClick: () => host.revealPane?.(PANE_ID),
+    onClick: () => togglePanel(ctx),
     children: [jsx(StatusDot, { tone }), label]
   })
+}
+
+// The panel is opened on demand with host.openWorkspace, so closing it only closes the tab:
+// sync, the chip and the card badges stay active. (A contributed pane can't do that: closing a
+// plugin's only pane turns the whole plugin off.) Older Desktops without openWorkspace fall back
+// to a regular docked pane.
+let closePanel = null
+
+export function togglePanel(ctx, h = host) {
+  if (typeof h.openWorkspace !== 'function') {
+    h.undismissPane?.(PANE_ID)
+    h.revealPane?.(PANE_ID)
+    return 'revealed'
+  }
+  if (closePanel) {
+    const close = closePanel
+    closePanel = null
+    close()
+    return 'closed'
+  }
+  closePanel = h.openWorkspace(PLUGIN_ID, {
+    title: 'Issue Sync',
+    dock: { pane: 'workspace', pos: 'bottom' },
+    render: () => jsx(SyncPane, { ctx }),
+    onClose: () => {
+      closePanel = null
+    }
+  })
+  return 'opened'
 }
 
 export default {
@@ -205,16 +234,17 @@ export default {
     cardIndex = new Map()
     ctx.onDispose(() => {
       cardIndex = new Map()
+      const close = closePanel
+      closePanel = null
+      close?.()
     })
     // `/issues show` on the backend broadcasts plugin.hermes-issue-sync.pane.show.
     const onEvent = ctx.onEvent ?? host.onEvent
-    const stop = onEvent?.(`plugin.${PLUGIN_ID}.pane.show`, () => {
-      host.undismissPane?.(PANE_ID)
-      host.revealPane?.(PANE_ID)
-    })
+    const stop = onEvent?.(`plugin.${PLUGIN_ID}.pane.show`, () => togglePanel(ctx))
     if (typeof stop === 'function' && !ctx.onEvent) ctx.onDispose(stop)
+    const useWorkspace = typeof host.openWorkspace === 'function'
     const contributions = [
-      {
+      !useWorkspace && {
         id: 'pane',
         area: PANES_AREA,
         title: 'Issue Sync',
@@ -226,9 +256,9 @@ export default {
         area: PALETTE_AREA,
         data: {
           id: 'open-pane',
-          label: 'Issue Sync: show pane',
+          label: 'Issue Sync: toggle panel',
           keywords: ['linear', 'jira', 'issues', 'sync', 'tracker'],
-          run: () => host.revealPane?.(PANE_ID)
+          run: () => togglePanel(ctx)
         }
       },
       {
@@ -256,6 +286,6 @@ export default {
       }
     ]
     // Skip any surface this Desktop build does not have (area undefined).
-    ctx.registerMany(contributions.filter(c => c.area))
+    ctx.registerMany(contributions.filter(c => c && c.area))
   }
 }
