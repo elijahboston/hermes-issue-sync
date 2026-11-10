@@ -1,0 +1,4 @@
+# Test-only tools. The plugin itself installs nothing (Hermes provides fastapi).
+# Kept out of pyproject.toml so Hermes does not treat the plugin as having dependencies.
+pytest>=8,<10
+fastapi>=0.110,<1

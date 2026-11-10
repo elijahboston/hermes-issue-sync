@@ -10,8 +10,3 @@ dependencies = []
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
-
-[dependency-groups]
-# The plugin itself has no dependencies (Hermes provides fastapi for dashboard/plugin_api.py);
-# these are only for running the test suite.
-dev = ["pytest>=8,<10", "fastapi>=0.110,<1"]
