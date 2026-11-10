@@ -27,7 +27,8 @@ TRACKER_SETTING = "plugins.entries.hermes-issue-sync.settings.tracker"
 CONNECTIONS_SETTING = "plugins.entries.hermes-issue-sync.settings.connections"
 ENABLED_SETTING = "plugins.entries.hermes-issue-sync.settings.enabled"
 HOOKS = ("on_kanban_dispatch_tick", "kanban_task_claimed", "kanban_task_completed", "kanban_task_blocked")
-USAGE = "usage: /issues status"
+USAGE = "usage: /issues [status|show]"
+SHOW_EVENT = "pane.show"
 
 _DEFAULTS: dict[str, Any] = {
     "tracker": "",
@@ -203,6 +204,20 @@ def _build_runners(ctx: Any, settings: Mapping[str, Any], kanban: Any) -> list[_
 _snapshot_lock = threading.Lock()
 
 
+def show_pane(broadcast: Callable[..., None] | None = None) -> str:
+    """Ask every connected Desktop window to open the Issue Sync pane."""
+    try:
+        if broadcast is None:
+            from hermes_cli.plugin_events import broadcast_plugin_event as broadcast  # documented
+        broadcast("hermes-issue-sync", SHOW_EVENT, {})
+    except Exception as exc:
+        return (f"issue-sync: could not reach Desktop ({type(exc).__name__}: {exc}). "
+                "Open the pane from the Issue Sync chip in the status bar.")
+    return ("issue-sync: asked Desktop to open the Issue Sync pane. If nothing opens, check that "
+            "Issue Sync is turned on in Capabilities → Plugins (the Desktop half), then click the "
+            "Issue Sync chip in the status bar.")
+
+
 def publish_snapshot(runners: list[_Runner], enabled: bool, directory: Any = None) -> None:
     """Write the sync pane's snapshot. Never raises: the pane is a view, sync must not depend on it."""
     try:
@@ -231,6 +246,8 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
 
     def issues_command(raw_args: str = "", **_kwargs: Any) -> str:
         sub = (raw_args or "").strip().lower()
+        if sub == "show":
+            return show_pane()
         if sub not in ("", "status"):
             return USAGE
         try:
@@ -243,7 +260,7 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
         "issues",
         handler=issues_command,
         description="Issue tracker sync for kanban cards",
-        args_hint="status",
+        args_hint="[status|show]",
     )
 
     enabled = _enabled(settings)

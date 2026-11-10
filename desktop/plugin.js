@@ -167,18 +167,32 @@ function SyncPane({ ctx }) {
   })
 }
 
-function StatusChip({ ctx }) {
-  const { data } = useSnapshot(ctx)
+// Pure: what the chip says for a query state. Always returns something, so a broken backend shows
+// up as a red "Issue Sync: error" chip instead of nothing.
+export function chipState({ data, error, isLoading }) {
+  if (error) {
+    const why = error?.message || String(error)
+    return { tone: 'bad', label: 'Issue Sync: error', title: `Issue Sync backend not reachable: ${why}. Click to open the pane.` }
+  }
+  if (isLoading && !data) return { tone: 'muted', label: 'Issue Sync…', title: 'Loading sync status' }
   const connections = data?.connections ?? []
-  if (!connections.length) return null
+  if (!connections.length) {
+    return { tone: 'muted', label: 'Issue Sync: not set up', title: 'No connections configured on this Hermes backend' }
+  }
+  if (data.enabled === false) return { tone: 'muted', label: 'Issue Sync: off', title: 'Sync is turned off in settings' }
   const waiting = connections.reduce((n, c) => n + (c.counts?.waiting ?? 0), 0)
   const errors = connections.reduce((n, c) => n + (c.counts?.errors ?? 0), 0)
-  const tone = errors ? 'bad' : waiting ? 'warn' : 'good'
-  const label = waiting ? `${waiting} waiting` : errors ? `${errors} sync error${errors > 1 ? 's' : ''}` : 'issues synced'
+  if (errors) return { tone: 'bad', label: `${errors} sync error${errors > 1 ? 's' : ''}`, title: 'Click to see the errors' }
+  if (waiting) return { tone: 'warn', label: `${waiting} waiting`, title: 'Questions waiting on an answer in the tracker' }
+  return { tone: 'good', label: 'issues synced', title: 'Open the Issue Sync pane' }
+}
+
+function StatusChip({ ctx }) {
+  const { tone, label, title } = chipState(useSnapshot(ctx))
   return jsxs('button', {
     type: 'button',
     className: 'flex items-center gap-1 px-1.5 text-[0.6875rem] text-(--ui-text-tertiary)',
-    title: 'Open the Issue Sync pane',
+    title,
     onClick: () => host.revealPane?.(PANE_ID),
     children: [jsx(StatusDot, { tone }), label]
   })
@@ -192,6 +206,13 @@ export default {
     ctx.onDispose(() => {
       cardIndex = new Map()
     })
+    // `/issues show` on the backend broadcasts plugin.hermes-issue-sync.pane.show.
+    const onEvent = ctx.onEvent ?? host.onEvent
+    const stop = onEvent?.(`plugin.${PLUGIN_ID}.pane.show`, () => {
+      host.undismissPane?.(PANE_ID)
+      host.revealPane?.(PANE_ID)
+    })
+    if (typeof stop === 'function' && !ctx.onEvent) ctx.onDispose(stop)
     const contributions = [
       {
         id: 'pane',

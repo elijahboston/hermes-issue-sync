@@ -55,7 +55,7 @@ def test_fake_tracker_registers_hooks_and_command(make_ctx, kanban):
     assert set(ctx.hooks) == HOOKS
     handler, kwargs = ctx.commands["issues"]
     assert callable(handler)
-    assert kwargs["args_hint"] == "status"
+    assert "status" in kwargs["args_hint"] and "show" in kwargs["args_hint"]
     assert kwargs["description"]
 
 
@@ -224,3 +224,22 @@ def test_background_tick_keeps_the_callers_context(plugin, kanban, stub_ctx):
     assert ran.wait(5)
     assert seen == [("profile-a", "issue-sync-tick-fake")]
     assert _PROFILE_SCOPE.get() is None
+
+
+def test_show_sends_the_pane_event_and_says_where_to_look(plugin):
+    sent = []
+    text = plugin.show_pane(lambda pid, event, payload: sent.append((pid, event, payload)))
+    assert sent == [("hermes-issue-sync", "pane.show", {})]
+    assert "Capabilities" in text and "chip" in text
+
+
+def test_show_reports_when_desktop_cannot_be_reached(plugin):
+    def boom(*_):
+        raise RuntimeError("no clients")
+    assert "could not reach Desktop" in plugin.show_pane(boom)
+
+
+def test_issues_show_is_routed(make_ctx, kanban):
+    ctx = make_ctx(tracker="fake")
+    assert "Issue Sync" in ctx.commands["issues"][0]("show")
+    assert ctx.commands["issues"][0]("bogus").startswith("usage:")
