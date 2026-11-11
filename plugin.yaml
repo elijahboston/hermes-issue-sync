@@ -65,10 +65,12 @@ config_schema:
     description: Minimum seconds between tracker polls on the kanban dispatch tick.
   tree_style:
     type: str
+    choices: [rounded, lines]
     default: rounded
+    label: Panel tree style
     description: >-
-      Default look of the Desktop panel's tree connectors: "rounded" (curved last branch, lines
-      tinted per tracker) or "lines" (plain square lines). Each Desktop can switch it in the panel.
+      How the Desktop panel draws its tree connectors: "rounded" (curved last branch, lines tinted
+      per tracker) or "lines" (plain square lines).
   enabled:
     type: bool
     default: true

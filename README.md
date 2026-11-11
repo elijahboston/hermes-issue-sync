@@ -142,8 +142,8 @@ Statuses left out of `state_map` are not pushed to the tracker.
 In Desktop, the status-bar chip also toggles the panel. Closing the panel keeps sync running.
 
 The panel shows a tree: tracker → board → issues, each level collapsible. Its connector style is
-`tree_style: rounded` (default; tinted per tracker) or `tree_style: lines` in the plugin settings,
-and the **Tree:** switch at the top of the panel overrides it on that Desktop.
+the **Panel tree style** plugin setting (Capabilities → Plugins → Issue Sync → settings, or
+`tree_style` in `config.yaml`): `rounded` (default; tinted per tracker) or `lines`.
 
 ## Known Hermes issue: multi-profile gateways
 

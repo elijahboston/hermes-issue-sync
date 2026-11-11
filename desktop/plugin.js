@@ -147,14 +147,13 @@ export function groupByTracker(connections) {
 // app ships. "rounded" (default): last branch curves into its row, lines tinted per tracker.
 // "lines": square elbows in the theme's stroke colour.
 export const TREE_STYLES = ['rounded', 'lines']
-const TREE_STYLE_KEY = 'treeStyle'
 const TREE_TINT = { linear: '#5e6ad2', jira: '#2684ff' }
 const STROKE = 'var(--ui-stroke-secondary, rgba(128, 128, 128, 0.45))'
 const ELBOW_Y = 12 // px from the top of a row to its centre line
 const INDENT = 16
 
-export function treeStyleOf(data, override) {
-  if (TREE_STYLES.includes(override)) return override
+// The style comes only from the plugin setting (tree_style), carried in the snapshot.
+export function treeStyleOf(data) {
   const fromConfig = data?.display?.tree_style
   return TREE_STYLES.includes(fromConfig) ? fromConfig : 'rounded'
 }
@@ -189,30 +188,6 @@ function Branches({ tree, items, render }) {
     className: 'flex flex-col',
     style: { marginLeft: 12 },
     children: items.map((item, i) => jsx(Branch, { tree, last: i === items.length - 1, children: render(item) }, i))
-  })
-}
-
-function useTreeStyle(ctx) {
-  const [override, setOverride] = useState(() => ctx.storage?.get?.(TREE_STYLE_KEY, null))
-  const choose = value => {
-    ctx.storage?.set?.(TREE_STYLE_KEY, value)
-    setOverride(value)
-  }
-  return [override, choose]
-}
-
-function TreeStyleSwitch({ value, onChange }) {
-  const option = (id, label) =>
-    jsx('button', {
-      type: 'button',
-      'aria-pressed': value === id,
-      className: `rounded px-1.5 ${value === id ? 'bg-(--ui-bg-tertiary) text-(--ui-text-secondary)' : 'hover:bg-(--ui-bg-tertiary)'}`,
-      onClick: () => onChange(id),
-      children: label
-    })
-  return jsxs('div', {
-    className: 'flex items-center justify-end gap-1 px-2 text-[0.6875rem] text-(--ui-text-tertiary)',
-    children: ['Tree:', option('rounded', 'Rounded'), option('lines', 'Lines')]
   })
 }
 
@@ -328,7 +303,6 @@ function TrackerGroup({ ctx, tracker, collapsed, toggle, style }) {
 function SyncPane({ ctx }) {
   const { data, error, isLoading } = useSnapshot(ctx)
   const [collapsed, toggle] = useCollapsed(ctx)
-  const [styleOverride, chooseStyle] = useTreeStyle(ctx)
   if (isLoading) return jsx(Muted, { className: 'p-3 text-xs', children: 'Loading sync status…' })
   if (error) {
     return jsx(EmptyState, {
@@ -348,10 +322,9 @@ function SyncPane({ ctx }) {
     children: jsxs('div', {
       className: 'flex flex-col gap-3 p-2',
       children: [
-        jsx(TreeStyleSwitch, { value: treeStyleOf(data, styleOverride), onChange: chooseStyle }),
         data.enabled === false && jsx(Muted, { className: 'px-2 text-xs', children: 'Sync is turned off in settings.' }),
         ...groupByTracker(connections).map(tracker =>
-          jsx(TrackerGroup, { ctx, tracker, collapsed, toggle, style: treeStyleOf(data, styleOverride) }, tracker.key)
+          jsx(TrackerGroup, { ctx, tracker, collapsed, toggle, style: treeStyleOf(data) }, tracker.key)
         )
       ]
     })
