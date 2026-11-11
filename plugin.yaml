@@ -1,7 +1,8 @@
 name: hermes-issue-sync
 version: "0.1.0"
 manifest_version: 2
-description: Two-way sync between Hermes kanban cards and issue trackers (Linear, Jira, GitHub, ...).
+description: Two-way sync between Hermes kanban cards and Linear or Jira issues, including blocked-card questions answered in the tracker.
+requires_hermes: ">=0.21.6"
 author: Elijah Boston
 license: MIT
 provides_tools: []

@@ -36,16 +36,14 @@ def fake_hermes(monkeypatch, tmp_path):
     ss.get_secret = get_secret
     hc = types.ModuleType("hermes_constants")
     hc.get_hermes_home = lambda: tmp_path
-    lp = types.ModuleType("tui_gateway.launch_profile_policy")
 
-    def owner_secret_scope(home):
+    def build_profile_secret_scope(home):
         state["owner_calls"].append(home)
         return {"LINEAR_API_KEY": "from-profile"}
 
-    lp.owner_secret_scope = owner_secret_scope
+    ss.build_profile_secret_scope = build_profile_secret_scope
     for name, mod in {"agent": types.ModuleType("agent"), "agent.secret_scope": ss,
-                      "hermes_constants": hc, "tui_gateway": types.ModuleType("tui_gateway"),
-                      "tui_gateway.launch_profile_policy": lp}.items():
+                      "hermes_constants": hc}.items():
         monkeypatch.setitem(sys.modules, name, mod)
     state["scope"] = scope
     return state

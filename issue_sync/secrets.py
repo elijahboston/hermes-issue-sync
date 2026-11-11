@@ -35,14 +35,18 @@ def ensure_profile_scope() -> Iterator[None]:
     Hermes's own auto-decompose tick binds the gateway launch profile's scope for the same reason
     (``gateway/kanban_watchers_dispatcher.py::_default_profile_secret_scope``); this mirrors it.
 
+    Uses only the public ``agent.secret_scope`` API: the scope is built from the profile's own
+    ``.env``, its configured secret sources and any admin-managed ``.env``. A key that exists only
+    as an environment variable of the gateway process is not included; put it in the profile's
+    ``.env`` instead.
+
     No-op when a scope is already bound (Hermes did its job), when the gateway serves a single
-    profile, or outside Hermes. Remove once the dispatcher binds the scope itself.
+    profile, or outside Hermes. Remove once the dispatcher binds the scope itself (#151126).
     """
     try:
-        from agent.secret_scope import (current_secret_scope, is_multiplex_active,
-                                        reset_secret_scope, set_secret_scope)
+        from agent.secret_scope import (build_profile_secret_scope, current_secret_scope,
+                                        is_multiplex_active, reset_secret_scope, set_secret_scope)
         from hermes_constants import get_hermes_home
-        from tui_gateway.launch_profile_policy import owner_secret_scope
     except ImportError:  # outside Hermes, or a Hermes without these seams
         yield
         return
@@ -54,7 +58,7 @@ def ensure_profile_scope() -> Iterator[None]:
         _warned.append(True)
         logger.info("issue-sync: hook fired without a profile secret scope; binding %s's own scope "
                     "(workaround for the kanban dispatcher, see README)", home.name or "default")
-    token = set_secret_scope(owner_secret_scope(home), profile_home=str(home))
+    token = set_secret_scope(build_profile_secret_scope(home), profile_home=str(home))
     try:
         yield
     finally:
