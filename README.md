@@ -144,6 +144,8 @@ In Desktop, the status-bar chip also toggles the panel. Closing the panel keeps 
 The panel shows a tree: tracker → board → issues, each level collapsible. Its connector style is
 the **Panel tree style** plugin setting (Capabilities → Plugins → Issue Sync → settings, or
 `tree_style` in `config.yaml`): `rounded` (default; tinted per tracker) or `lines`.
+Each board header names the projects that feed it and the connection they come through
+(`Ticket Sync Sandbox · via linear-sandbox`).
 
 ## Known Hermes issue: multi-profile gateways
 

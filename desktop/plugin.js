@@ -103,7 +103,11 @@ export function groupByBoard(connections) {
     if (!boards.has(name)) boards.set(name, { name, sources: [], items: [], problems: [], linked: 0, waiting: 0, errors: 0, lastPoll: null })
     const b = boards.get(name)
     const tracker = TRACKER_LABEL[conn.tracker] ?? conn.tracker ?? '?'
-    b.sources.push(`${tracker} · ${conn.projects?.length ? conn.projects.join(', ') : 'all projects'}`)
+    b.sources.push({
+      tracker,
+      projects: conn.projects?.length ? conn.projects.join(', ') : 'all projects',
+      conn: conn.name
+    })
     if (conn.error) b.problems.push(`${conn.name}: not running: ${conn.error}`)
     if (conn.last_error) b.problems.push(`${conn.name}: last sync failed: ${conn.last_error}`)
     if (conn.backoff_until) b.problems.push(`${conn.name}: rate limited; retrying ${ago(conn.backoff_until)}`)
@@ -228,7 +232,7 @@ function BoardGroup({ ctx, board, open, onToggle, tree }) {
         children: [
           jsx(StatusDot, { tone: board.tone }),
           jsx('span', { className: 'font-medium', children: board.name }),
-          ...board.sources.map((src, i) => jsx(Muted, { children: src.split(' · ').slice(1).join(' · ') || src }, `src${i}`)),
+          ...board.sources.map((src, i) => jsx(Muted, { title: `Connection ${src.conn}`, children: `${src.projects} · via ${src.conn}` }, `src${i}`)),
           board.waiting ? jsx(Badge, { variant: 'outline', children: `${board.waiting} waiting` }) : null,
           jsx(Muted, { className: 'ml-auto', children: `${board.linked} linked · checked ${ago(board.lastPoll)}` }),
           jsx('span', { 'aria-hidden': true, className: 'w-3 text-center', children: open ? '▲' : '▼' })
