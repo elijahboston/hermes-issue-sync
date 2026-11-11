@@ -58,7 +58,10 @@ config_schema:
   board:
     type: str
     default: ""
-    description: Kanban board slug to sync; empty uses the default board.
+    label: Kanban board
+    description: >-
+      Hermes kanban board that new cards go to. Used by any connection that doesn't set its own
+      board; empty uses Hermes's default board.
   poll_interval_seconds:
     type: int
     default: 60
