@@ -34,19 +34,23 @@ config_schema:
   api_key_env:
     type: str
     default: LINEAR_API_KEY
-    description: "Linear: name of the env var / profile secret holding the Linear API key (sent as-is, no Bearer)."
+    label: Linear API key env var
+    description: "Linear: name of the env var / profile secret holding the Linear API key (sent as-is, no Bearer). Blank uses LINEAR_API_KEY."
   base_url_env:
     type: str
     default: JIRA_BASE_URL
-    description: "Jira: name of the env var / profile secret holding the site URL, e.g. https://example.atlassian.net."
+    label: Jira site URL env var
+    description: "Jira: name of the env var / profile secret holding the site URL, e.g. https://example.atlassian.net. Blank uses JIRA_BASE_URL."
   email_env:
     type: str
     default: JIRA_EMAIL
-    description: "Jira: name of the env var / profile secret holding the Atlassian account email for Basic auth."
+    label: Jira email env var
+    description: "Jira: name of the env var / profile secret holding the Atlassian account email for Basic auth. Blank uses JIRA_EMAIL."
   token_env:
     type: str
     default: JIRA_API_TOKEN
-    description: "Jira: name of the env var / profile secret holding the Atlassian API token for Basic auth."
+    label: Jira API token env var
+    description: "Jira: name of the env var / profile secret holding the Atlassian API token for Basic auth. Blank uses JIRA_API_TOKEN."
   state_map:
     type: dict
     default: {}

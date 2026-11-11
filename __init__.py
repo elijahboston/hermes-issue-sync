@@ -65,6 +65,9 @@ def _read_settings(ctx: Any) -> dict[str, Any]:
         settings[key] = default if value is None else value
     for key in ("tracker", "assignee", "board", "api_key_env", "base_url_env", "email_env", "token_env"):
         settings[key] = str(settings[key]).strip()
+    # A credential name saved blank (e.g. a cleared settings field) means "use the default name".
+    for key in ("api_key_env", "base_url_env", "email_env", "token_env"):
+        settings[key] = settings[key] or _DEFAULTS[key]
     for key in ("filter", "state_map"):
         if not isinstance(settings[key], Mapping):
             _log_once(logging.WARNING, "issue-sync: setting %r must be a mapping; ignoring it", key)

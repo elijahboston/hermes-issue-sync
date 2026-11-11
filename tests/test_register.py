@@ -243,3 +243,11 @@ def test_issues_show_is_routed(make_ctx, kanban):
     ctx = make_ctx(tracker="fake")
     assert "Issue Sync" in ctx.commands["issues"][0]("show")
     assert ctx.commands["issues"][0]("bogus").startswith("usage:")
+
+
+def test_blank_credential_names_fall_back_to_defaults(plugin, stub_ctx):
+    """A settings form can save a credential-name field as ''; that means the default name."""
+    settings = plugin._read_settings(stub_ctx({"api_key_env": "", "token_env": "  ", "email_env": "MY_EMAIL"}))
+    assert settings["api_key_env"] == "LINEAR_API_KEY"
+    assert settings["token_env"] == "JIRA_API_TOKEN"
+    assert settings["email_env"] == "MY_EMAIL"
