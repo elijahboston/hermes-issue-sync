@@ -58,7 +58,7 @@ config_schema:
   board:
     type: str
     default: ""
-    label: Kanban board
+    label: Default kanban board
     description: >-
       Hermes kanban board that new cards go to. Used by any connection that doesn't set its own
       board; empty uses Hermes's default board.
