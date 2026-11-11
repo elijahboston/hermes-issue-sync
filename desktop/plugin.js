@@ -119,7 +119,31 @@ export function groupByBoard(connections) {
   return [...boards.values()]
 }
 
-const COLLAPSED_KEY = 'collapsedBoards'
+// Pure: tracker → boards. Each tracker (Linear, Jira) is a top-level group; its boards sit under
+// it, built only from that tracker's connections, so the same board name can appear under both.
+export function groupByTracker(connections) {
+  const trackers = new Map()
+  for (const conn of connections ?? []) {
+    const key = conn.tracker || '?'
+    if (!trackers.has(key)) trackers.set(key, [])
+    trackers.get(key).push(conn)
+  }
+  return [...trackers.entries()].map(([key, conns]) => {
+    const boards = groupByBoard(conns)
+    const tone = boards.some(b => b.tone === 'bad') ? 'bad' : boards.some(b => b.tone === 'warn') ? 'warn' : 'good'
+    return {
+      key,
+      label: TRACKER_LABEL[key] ?? key,
+      boards,
+      tone,
+      linked: boards.reduce((n, b) => n + b.linked, 0),
+      waiting: boards.reduce((n, b) => n + b.waiting, 0)
+    }
+  })
+}
+
+// Collapse keys: "t:<tracker>" for a tracker group, "b:<tracker>:<board>" for a board in it.
+const COLLAPSED_KEY = 'collapsedGroups'
 
 function useCollapsed(ctx) {
   // Saved per plugin on this Desktop (ctx.storage); boards start expanded.
@@ -156,7 +180,7 @@ function BoardGroup({ ctx, board, open, onToggle }) {
         children: [
           jsx(StatusDot, { tone: board.tone }),
           jsx('span', { className: 'font-medium', children: board.name }),
-          ...board.sources.map((src, i) => jsx(Muted, { children: src }, `src${i}`)),
+          ...board.sources.map((src, i) => jsx(Muted, { children: src.split(' · ').slice(1).join(' · ') || src }, `src${i}`)),
           board.waiting ? jsx(Badge, { variant: 'outline', children: `${board.waiting} waiting` }) : null,
           jsx(Muted, { className: 'ml-auto', children: `${board.linked} linked · checked ${ago(board.lastPoll)}` }),
           jsx('span', { 'aria-hidden': true, className: 'w-3 text-center', children: open ? '▲' : '▼' })
@@ -187,6 +211,48 @@ function useSnapshot(ctx) {
   })
 }
 
+function TrackerGroup({ ctx, tracker, collapsed, toggle }) {
+  const tKey = `t:${tracker.key}`
+  const open = !collapsed.has(tKey)
+  const problems = tracker.boards.flatMap(b => b.problems)
+  return jsxs('section', {
+    className: 'flex flex-col gap-1',
+    children: [
+      jsxs('div', {
+        role: 'button',
+        tabIndex: 0,
+        'aria-expanded': open,
+        title: open ? 'Collapse' : 'Expand',
+        className: 'flex cursor-pointer select-none items-center gap-2 rounded px-2 py-1 text-xs font-semibold uppercase tracking-wide hover:bg-(--ui-bg-tertiary)',
+        onClick: () => toggle(tKey),
+        onKeyDown: e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            toggle(tKey)
+          }
+        },
+        children: [
+          jsx(StatusDot, { tone: tracker.tone }),
+          jsx('span', { children: tracker.label }),
+          tracker.waiting ? jsx(Badge, { variant: 'outline', children: `${tracker.waiting} waiting` }) : null,
+          jsx(Muted, { className: 'ml-auto font-normal normal-case tracking-normal', children: `${tracker.boards.length} board${tracker.boards.length === 1 ? '' : 's'} · ${tracker.linked} linked` }),
+          jsx('span', { 'aria-hidden': true, className: 'w-3 text-center', children: open ? '▲' : '▼' })
+        ]
+      }),
+      // A collapsed tracker still shows its errors.
+      !open && problems.map((p, i) => jsx('div', { className: 'pl-6 text-xs text-destructive', children: p }, `tp${i}`)),
+      open &&
+        jsx('div', {
+          className: 'flex flex-col gap-1 pl-4',
+          children: tracker.boards.map(board => {
+            const bKey = `b:${tracker.key}:${board.name}`
+            return jsx(BoardGroup, { ctx, board, open: !collapsed.has(bKey), onToggle: () => toggle(bKey) }, bKey)
+          })
+        })
+    ]
+  })
+}
+
 function SyncPane({ ctx }) {
   const { data, error, isLoading } = useSnapshot(ctx)
   const [collapsed, toggle] = useCollapsed(ctx)
@@ -210,8 +276,8 @@ function SyncPane({ ctx }) {
       className: 'flex flex-col gap-3 p-2',
       children: [
         data.enabled === false && jsx(Muted, { className: 'px-2 text-xs', children: 'Sync is turned off in settings.' }),
-        ...groupByBoard(connections).map(board =>
-          jsx(BoardGroup, { ctx, board, open: !collapsed.has(board.name), onToggle: () => toggle(board.name) }, board.name)
+        ...groupByTracker(connections).map(tracker =>
+          jsx(TrackerGroup, { ctx, tracker, collapsed, toggle }, tracker.key)
         )
       ]
     })
