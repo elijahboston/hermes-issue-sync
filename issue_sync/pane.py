@@ -38,6 +38,10 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
         link = link_from_card(card)
         if link is None:
             continue
+        seen.add(link.id)
+        # Archived cards are cleared off the board, so they leave the panel too.
+        if card.get("status") == "archived":
+            continue
         entry = links.get(link.id) or {}
         waiting = bool(entry.get("asked_block")) and entry.get("asked_block") != entry.get("answered_block") \
             and card.get("status") == "blocked"
@@ -52,7 +56,6 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
             "question": entry.get("question") if waiting else None,
             "error": entry.get("last_error"),
         })
-        seen.add(link.id)
     # Links with an error but no card yet (a failed card create) still need to be visible.
     for link_id, entry in sorted(links.items()):
         if link_id not in seen and isinstance(entry, dict) and entry.get("last_error") and not entry.get("card_id"):

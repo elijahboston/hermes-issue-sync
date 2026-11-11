@@ -61,6 +61,19 @@ def test_answered_question_is_no_longer_waiting(tmp_path):
     assert block["counts"]["waiting"] == 0 and block["items"][0]["question"] is None
 
 
+def test_archived_cards_leave_the_panel(tmp_path):
+    conn, adapter, kanban, state, engine = _setup(tmp_path)
+    adapter.add_issue("F-1", "old test")
+    adapter.add_issue("F-2", "live")
+    engine.tick(force=True)
+    old = next(cid for cid, c in kanban.cards.items() if "F-1" in c["title"])
+    kanban.set_status(old, "archived")
+    engine.tick(force=True)
+    block = pane.connection_snapshot(conn, state, engine.last_cards, None, True)
+    assert [i["key"] for i in block["items"]] == ["F-2"]
+    assert block["counts"]["linked"] == 1
+
+
 def test_broken_connection_is_reported_without_items(tmp_path):
     (conn,) = parse_connections({"connections": [{"id": "bad", "tracker": "nope"}]})
     block = pane.connection_snapshot(conn, SyncState(MemoryStore(), namespace="bad"), [], "unknown tracker", False)
