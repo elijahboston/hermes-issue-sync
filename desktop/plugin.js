@@ -6,6 +6,7 @@
 // file at load ("does not provide an export named …"). Optional surfaces are looked up here and
 // skipped (or replaced by a plain fallback) when absent, so the pane works on older builds too.
 import * as sdk from '@hermes/plugin-sdk'
+import { useState } from 'react'
 import { jsx, jsxs } from 'react/jsx-runtime'
 
 const { host, useQuery } = sdk
@@ -45,13 +46,6 @@ function indexCards(snapshot) {
 
 function ago(seconds) {
   return seconds ? relativeTime(seconds * 1000) : 'never'
-}
-
-function connectionTone(conn) {
-  if (conn.error || conn.last_error) return 'bad'
-  if (!conn.running) return 'muted'
-  if (conn.counts?.waiting) return 'warn'
-  return 'good'
 }
 
 function itemTone(item) {
@@ -100,28 +94,83 @@ function ItemRow({ ctx, item }) {
   })
 }
 
-function ConnectionBlock({ ctx, conn }) {
-  const tracker = TRACKER_LABEL[conn.tracker] ?? conn.tracker
-  const projects = conn.projects?.length ? conn.projects.join(', ') : 'all projects'
+// Pure: one group per kanban board. Several connections can feed the same board; their issues
+// and errors are merged under one header. Order follows the first connection that names a board.
+export function groupByBoard(connections) {
+  const boards = new Map()
+  for (const conn of connections ?? []) {
+    const name = conn.board || 'default'
+    if (!boards.has(name)) boards.set(name, { name, sources: [], items: [], problems: [], linked: 0, waiting: 0, errors: 0, lastPoll: null })
+    const b = boards.get(name)
+    const tracker = TRACKER_LABEL[conn.tracker] ?? conn.tracker ?? '?'
+    b.sources.push(`${tracker} · ${conn.projects?.length ? conn.projects.join(', ') : 'all projects'}`)
+    if (conn.error) b.problems.push(`${conn.name}: not running: ${conn.error}`)
+    if (conn.last_error) b.problems.push(`${conn.name}: last sync failed: ${conn.last_error}`)
+    if (conn.backoff_until) b.problems.push(`${conn.name}: rate limited; retrying ${ago(conn.backoff_until)}`)
+    for (const item of conn.items ?? []) b.items.push({ ...item, conn: conn.name })
+    b.linked += conn.counts?.linked ?? 0
+    b.waiting += conn.counts?.waiting ?? 0
+    b.errors += conn.counts?.errors ?? 0
+    if (conn.last_poll_at && (!b.lastPoll || conn.last_poll_at > b.lastPoll)) b.lastPoll = conn.last_poll_at
+  }
+  for (const b of boards.values()) {
+    b.tone = b.errors || b.problems.length ? 'bad' : b.waiting ? 'warn' : 'good'
+  }
+  return [...boards.values()]
+}
+
+const COLLAPSED_KEY = 'collapsedBoards'
+
+function useCollapsed(ctx) {
+  // Saved per plugin on this Desktop (ctx.storage); boards start expanded.
+  const [collapsed, setCollapsed] = useState(() => {
+    const v = ctx.storage?.get?.(COLLAPSED_KEY, [])
+    return new Set(Array.isArray(v) ? v : [])
+  })
+  const toggle = name => {
+    const next = new Set(collapsed)
+    next.has(name) ? next.delete(name) : next.add(name)
+    ctx.storage?.set?.(COLLAPSED_KEY, [...next])
+    setCollapsed(next)
+  }
+  return [collapsed, toggle]
+}
+
+function BoardGroup({ ctx, board, open, onToggle }) {
   return jsxs('section', {
-    className: 'flex flex-col gap-1',
+    className: 'flex flex-col gap-0.5',
     children: [
       jsxs('div', {
-        className: 'flex flex-wrap items-center gap-2 px-2 text-xs',
+        role: 'button',
+        tabIndex: 0,
+        'aria-expanded': open,
+        title: open ? 'Collapse' : 'Expand',
+        className: 'flex cursor-pointer select-none flex-wrap items-center gap-2 rounded border border-(--ui-bg-tertiary) px-2 py-1 text-xs hover:bg-(--ui-bg-tertiary)',
+        onClick: onToggle,
+        onKeyDown: e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onToggle()
+          }
+        },
         children: [
-          jsx(StatusDot, { tone: connectionTone(conn) }),
-          jsx('span', { className: 'font-medium', children: tracker }),
-          jsx('span', { children: projects }),
-          jsx(Muted, { children: `label ${conn.label}` }),
-          jsx(Muted, { children: `→ board ${conn.board}` }),
-          conn.counts?.waiting ? jsx(Badge, { variant: 'outline', children: `${conn.counts.waiting} waiting` }) : null,
-          jsx(Muted, { className: 'ml-auto', children: `${conn.counts?.linked ?? 0} linked · checked ${ago(conn.last_poll_at)}` })
+          jsx(StatusDot, { tone: board.tone }),
+          jsx('span', { className: 'font-medium', children: board.name }),
+          ...board.sources.map((src, i) => jsx(Muted, { children: src }, `src${i}`)),
+          board.waiting ? jsx(Badge, { variant: 'outline', children: `${board.waiting} waiting` }) : null,
+          jsx(Muted, { className: 'ml-auto', children: `${board.linked} linked · checked ${ago(board.lastPoll)}` }),
+          jsx('span', { 'aria-hidden': true, className: 'w-3 text-center', children: open ? '▲' : '▼' })
         ]
       }),
-      conn.error && jsx('div', { className: 'px-2 text-xs text-destructive', children: `Not running: ${conn.error}` }),
-      conn.last_error && jsx('div', { className: 'px-2 text-xs text-destructive', children: `Last sync failed: ${conn.last_error}` }),
-      conn.backoff_until && jsx(Muted, { className: 'px-2 text-xs', children: `Rate limited; retrying ${ago(conn.backoff_until)}` }),
-      ...(conn.items ?? []).map(item => jsx(ItemRow, { ctx, item }, `${conn.name}:${item.key}`))
+      // Problems stay visible even when the board is collapsed, so collapsing never hides a failure.
+      ...board.problems.map((p, i) => jsx('div', { className: 'pl-6 text-xs text-destructive', children: p }, `p${i}`)),
+      open &&
+        jsx('div', {
+          className: 'flex flex-col pl-5',
+          children: board.items.length
+            ? board.items.map(item => jsx(ItemRow, { ctx, item }, `${item.conn}:${item.key}`))
+            : jsx(Muted, { className: 'px-2 py-1 text-xs', children: 'No synced issues yet.' })
+        })
     ]
   })
 }
@@ -140,6 +189,7 @@ function useSnapshot(ctx) {
 
 function SyncPane({ ctx }) {
   const { data, error, isLoading } = useSnapshot(ctx)
+  const [collapsed, toggle] = useCollapsed(ctx)
   if (isLoading) return jsx(Muted, { className: 'p-3 text-xs', children: 'Loading sync status…' })
   if (error) {
     return jsx(EmptyState, {
@@ -160,8 +210,9 @@ function SyncPane({ ctx }) {
       className: 'flex flex-col gap-3 p-2',
       children: [
         data.enabled === false && jsx(Muted, { className: 'px-2 text-xs', children: 'Sync is turned off in settings.' }),
-        jsx(Muted, { className: 'px-2 text-[0.6875rem] uppercase tracking-wide', children: 'Synced with' }),
-        ...connections.map(conn => jsx(ConnectionBlock, { ctx, conn }, conn.name))
+        ...groupByBoard(connections).map(board =>
+          jsx(BoardGroup, { ctx, board, open: !collapsed.has(board.name), onToggle: () => toggle(board.name) }, board.name)
+        )
       ]
     })
   })
