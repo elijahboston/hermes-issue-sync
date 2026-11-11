@@ -141,6 +141,10 @@ Statuses left out of `state_map` are not pushed to the tracker.
 
 In Desktop, the status-bar chip also toggles the panel. Closing the panel keeps sync running.
 
+The panel shows a tree: tracker → board → issues, each level collapsible. Its connector style is
+`tree_style: rounded` (default; tinted per tracker) or `tree_style: lines` in the plugin settings,
+and the **Tree:** switch at the top of the panel overrides it on that Desktop.
+
 ## Known Hermes issue: multi-profile gateways
 
 On a gateway that serves several profiles, Hermes fires `on_kanban_dispatch_tick` without a

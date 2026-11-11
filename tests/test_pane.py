@@ -98,3 +98,10 @@ def test_backend_route_serves_the_snapshot(tmp_path, monkeypatch):
     assert asyncio.run(api.status())["connections"] == []  # nothing written yet
     pane.write_snapshot(tmp_path / "hermes-issue-sync", pane.build_snapshot([{"name": "lin"}]))
     assert asyncio.run(api.status())["connections"] == [{"name": "lin"}]
+
+
+def test_snapshot_carries_tree_style_and_defaults_to_rounded():
+    assert pane.build_snapshot([])["display"]["tree_style"] == "rounded"
+    assert pane.build_snapshot([], tree_style="lines")["display"]["tree_style"] == "lines"
+    assert pane.build_snapshot([], tree_style=" LINES ")["display"]["tree_style"] == "lines"
+    assert pane.build_snapshot([], tree_style="zigzag")["display"]["tree_style"] == "rounded"

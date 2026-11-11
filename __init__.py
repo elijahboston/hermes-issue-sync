@@ -39,6 +39,7 @@ _DEFAULTS: dict[str, Any] = {
     "poll_interval_seconds": 60,
     "enabled": True,
     "connections": [],
+    "tree_style": "rounded",
     # Adapter credentials: names of the env vars / profile secrets to read, never the values.
     "api_key_env": "LINEAR_API_KEY",
     "base_url_env": "JIRA_BASE_URL",
@@ -218,7 +219,8 @@ def show_pane(broadcast: Callable[..., None] | None = None) -> str:
             "Issue Sync chip in the status bar.")
 
 
-def publish_snapshot(runners: list[_Runner], enabled: bool, directory: Any = None) -> None:
+def publish_snapshot(runners: list[_Runner], enabled: bool, directory: Any = None,
+                     tree_style: Any = None) -> None:
     """Write the sync pane's snapshot. Never raises: the pane is a view, sync must not depend on it."""
     try:
         target = directory if directory is not None else pane.data_dir()
@@ -227,7 +229,8 @@ def publish_snapshot(runners: list[_Runner], enabled: bool, directory: Any = Non
         blocks = [pane.connection_snapshot(r.conn, r.state, r.engine.last_cards if r.engine else [],
                                            r.error, r.engine is not None) for r in runners]
         with _snapshot_lock:
-            pane.write_snapshot(target, pane.build_snapshot(blocks, enabled=enabled))
+            pane.write_snapshot(target, pane.build_snapshot(blocks, enabled=enabled,
+                                                                tree_style=tree_style))
     except Exception as exc:
         logger.debug("issue-sync: could not write the pane snapshot: %s: %s", type(exc).__name__, exc)
 
@@ -264,14 +267,15 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
     )
 
     enabled = _enabled(settings)
-    publish_snapshot(runners, enabled, pane_dir)
+    tree_style = settings.get("tree_style")
+    publish_snapshot(runners, enabled, pane_dir, tree_style)
     # Hooks are registered even with nothing configured, so what the manifest declares always
     # matches what is registered; with no live connection they simply do nothing.
     live = [r for r in runners if r.engine is not None]
 
     def run_and_publish(engine: Any) -> None:
         engine.tick()
-        publish_snapshot(runners, enabled, pane_dir)
+        publish_snapshot(runners, enabled, pane_dir, tree_style)
 
     def tick(runner: _Runner) -> None:
         engine = runner.engine

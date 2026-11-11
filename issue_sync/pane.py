@@ -83,8 +83,19 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
     }
 
 
-def build_snapshot(blocks: list[dict[str, Any]], *, enabled: bool = True) -> dict[str, Any]:
-    return {"version": 1, "generated_at": time.time(), "enabled": enabled, "connections": blocks}
+TREE_STYLES = ("rounded", "lines")
+
+
+def tree_style_setting(value: Any) -> str:
+    """The panel's tree connector style; anything unknown falls back to the default ("rounded")."""
+    text = str(value or "").strip().lower()
+    return text if text in TREE_STYLES else TREE_STYLES[0]
+
+
+def build_snapshot(blocks: list[dict[str, Any]], *, enabled: bool = True,
+                   tree_style: Any = None) -> dict[str, Any]:
+    return {"version": 1, "generated_at": time.time(), "enabled": enabled,
+            "display": {"tree_style": tree_style_setting(tree_style)}, "connections": blocks}
 
 
 def write_snapshot(directory: Path, snapshot: Mapping[str, Any]) -> Path:

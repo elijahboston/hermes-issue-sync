@@ -143,6 +143,79 @@ export function groupByTracker(connections) {
 }
 
 // Collapse keys: "t:<tracker>" for a tracker group, "b:<tracker>:<board>" for a board in it.
+// Tree connectors, drawn with inline styles so they don't depend on which CSS classes the host
+// app ships. "rounded" (default): last branch curves into its row, lines tinted per tracker.
+// "lines": square elbows in the theme's stroke colour.
+export const TREE_STYLES = ['rounded', 'lines']
+const TREE_STYLE_KEY = 'treeStyle'
+const TREE_TINT = { linear: '#5e6ad2', jira: '#2684ff' }
+const STROKE = 'var(--ui-stroke-secondary, rgba(128, 128, 128, 0.45))'
+const ELBOW_Y = 12 // px from the top of a row to its centre line
+const INDENT = 16
+
+export function treeStyleOf(data, override) {
+  if (TREE_STYLES.includes(override)) return override
+  const fromConfig = data?.display?.tree_style
+  return TREE_STYLES.includes(fromConfig) ? fromConfig : 'rounded'
+}
+
+export function connectorStyles(style, tracker, last) {
+  const color = style === 'rounded' && TREE_TINT[tracker] ? `color-mix(in srgb, ${TREE_TINT[tracker]} 55%, ${STROKE})` : STROKE
+  const line = `1.5px solid ${color}`
+  const rail = { position: 'absolute', left: 0, top: 0, borderLeft: line, pointerEvents: 'none' }
+  const elbow = { position: 'absolute', left: 0, top: ELBOW_Y, width: INDENT - 3, borderTop: line, pointerEvents: 'none' }
+  if (!last) return { rail: { ...rail, bottom: 0 }, elbow }
+  if (style === 'rounded') {
+    return { rail: { ...rail, height: ELBOW_Y + 1, width: INDENT - 3, borderBottom: line, borderBottomLeftRadius: 7 }, elbow: null }
+  }
+  return { rail: { ...rail, height: ELBOW_Y }, elbow }
+}
+
+function Branch({ tree, last, children }) {
+  const { rail, elbow } = connectorStyles(tree.style, tree.tracker, last)
+  return jsxs('div', {
+    style: { position: 'relative', paddingLeft: INDENT },
+    children: [
+      jsx('span', { 'aria-hidden': true, style: rail }),
+      elbow && jsx('span', { 'aria-hidden': true, style: elbow }),
+      children
+    ]
+  })
+}
+
+// Children hang under the parent's status dot (row padding 8px + half the dot).
+function Branches({ tree, items, render }) {
+  return jsx('div', {
+    className: 'flex flex-col',
+    style: { marginLeft: 12 },
+    children: items.map((item, i) => jsx(Branch, { tree, last: i === items.length - 1, children: render(item) }, i))
+  })
+}
+
+function useTreeStyle(ctx) {
+  const [override, setOverride] = useState(() => ctx.storage?.get?.(TREE_STYLE_KEY, null))
+  const choose = value => {
+    ctx.storage?.set?.(TREE_STYLE_KEY, value)
+    setOverride(value)
+  }
+  return [override, choose]
+}
+
+function TreeStyleSwitch({ value, onChange }) {
+  const option = (id, label) =>
+    jsx('button', {
+      type: 'button',
+      'aria-pressed': value === id,
+      className: `rounded px-1.5 ${value === id ? 'bg-(--ui-bg-tertiary) text-(--ui-text-secondary)' : 'hover:bg-(--ui-bg-tertiary)'}`,
+      onClick: () => onChange(id),
+      children: label
+    })
+  return jsxs('div', {
+    className: 'flex items-center justify-end gap-1 px-2 text-[0.6875rem] text-(--ui-text-tertiary)',
+    children: ['Tree:', option('rounded', 'Rounded'), option('lines', 'Lines')]
+  })
+}
+
 const COLLAPSED_KEY = 'collapsedGroups'
 
 function useCollapsed(ctx) {
@@ -160,7 +233,7 @@ function useCollapsed(ctx) {
   return [collapsed, toggle]
 }
 
-function BoardGroup({ ctx, board, open, onToggle }) {
+function BoardGroup({ ctx, board, open, onToggle, tree }) {
   return jsxs('section', {
     className: 'flex flex-col gap-0.5',
     children: [
@@ -169,7 +242,7 @@ function BoardGroup({ ctx, board, open, onToggle }) {
         tabIndex: 0,
         'aria-expanded': open,
         title: open ? 'Collapse' : 'Expand',
-        className: 'flex cursor-pointer select-none flex-wrap items-center gap-2 rounded border border-(--ui-bg-tertiary) px-2 py-1 text-xs hover:bg-(--ui-bg-tertiary)',
+        className: 'flex cursor-pointer select-none flex-wrap items-center gap-2 rounded px-2 py-1 text-xs hover:bg-(--ui-bg-tertiary)',
         onClick: onToggle,
         onKeyDown: e => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -189,12 +262,9 @@ function BoardGroup({ ctx, board, open, onToggle }) {
       // Problems stay visible even when the board is collapsed, so collapsing never hides a failure.
       ...board.problems.map((p, i) => jsx('div', { className: 'pl-6 text-xs text-destructive', children: p }, `p${i}`)),
       open &&
-        jsx('div', {
-          className: 'flex flex-col pl-5',
-          children: board.items.length
-            ? board.items.map(item => jsx(ItemRow, { ctx, item }, `${item.conn}:${item.key}`))
-            : jsx(Muted, { className: 'px-2 py-1 text-xs', children: 'No synced issues yet.' })
-        })
+        (board.items.length
+          ? jsx(Branches, { tree, items: board.items, render: item => jsx(ItemRow, { ctx, item }) })
+          : jsx(Muted, { className: 'px-2 py-1 pl-8 text-xs', children: 'No synced issues yet.' }))
     ]
   })
 }
@@ -211,7 +281,8 @@ function useSnapshot(ctx) {
   })
 }
 
-function TrackerGroup({ ctx, tracker, collapsed, toggle }) {
+function TrackerGroup({ ctx, tracker, collapsed, toggle, style }) {
+  const tree = { style, tracker: tracker.key }
   const tKey = `t:${tracker.key}`
   const open = !collapsed.has(tKey)
   const problems = tracker.boards.flatMap(b => b.problems)
@@ -234,7 +305,7 @@ function TrackerGroup({ ctx, tracker, collapsed, toggle }) {
         children: [
           jsx(StatusDot, { tone: tracker.tone }),
           jsx('span', { children: tracker.label }),
-          tracker.waiting ? jsx(Badge, { variant: 'outline', children: `${tracker.waiting} waiting` }) : null,
+          tracker.waiting ? jsx('span', { className: 'font-normal normal-case tracking-normal', children: jsx(Badge, { variant: 'outline', children: `${tracker.waiting} waiting` }) }) : null,
           jsx(Muted, { className: 'ml-auto font-normal normal-case tracking-normal', children: `${tracker.boards.length} board${tracker.boards.length === 1 ? '' : 's'} · ${tracker.linked} linked` }),
           jsx('span', { 'aria-hidden': true, className: 'w-3 text-center', children: open ? '▲' : '▼' })
         ]
@@ -242,12 +313,13 @@ function TrackerGroup({ ctx, tracker, collapsed, toggle }) {
       // A collapsed tracker still shows its errors.
       !open && problems.map((p, i) => jsx('div', { className: 'pl-6 text-xs text-destructive', children: p }, `tp${i}`)),
       open &&
-        jsx('div', {
-          className: 'flex flex-col gap-1 pl-4',
-          children: tracker.boards.map(board => {
+        jsx(Branches, {
+          tree,
+          items: tracker.boards,
+          render: board => {
             const bKey = `b:${tracker.key}:${board.name}`
-            return jsx(BoardGroup, { ctx, board, open: !collapsed.has(bKey), onToggle: () => toggle(bKey) }, bKey)
-          })
+            return jsx(BoardGroup, { ctx, board, tree, open: !collapsed.has(bKey), onToggle: () => toggle(bKey) })
+          }
         })
     ]
   })
@@ -256,6 +328,7 @@ function TrackerGroup({ ctx, tracker, collapsed, toggle }) {
 function SyncPane({ ctx }) {
   const { data, error, isLoading } = useSnapshot(ctx)
   const [collapsed, toggle] = useCollapsed(ctx)
+  const [styleOverride, chooseStyle] = useTreeStyle(ctx)
   if (isLoading) return jsx(Muted, { className: 'p-3 text-xs', children: 'Loading sync status…' })
   if (error) {
     return jsx(EmptyState, {
@@ -275,9 +348,10 @@ function SyncPane({ ctx }) {
     children: jsxs('div', {
       className: 'flex flex-col gap-3 p-2',
       children: [
+        jsx(TreeStyleSwitch, { value: treeStyleOf(data, styleOverride), onChange: chooseStyle }),
         data.enabled === false && jsx(Muted, { className: 'px-2 text-xs', children: 'Sync is turned off in settings.' }),
         ...groupByTracker(connections).map(tracker =>
-          jsx(TrackerGroup, { ctx, tracker, collapsed, toggle }, tracker.key)
+          jsx(TrackerGroup, { ctx, tracker, collapsed, toggle, style: treeStyleOf(data, styleOverride) }, tracker.key)
         )
       ]
     })
