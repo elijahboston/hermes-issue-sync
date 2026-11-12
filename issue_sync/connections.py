@@ -18,7 +18,7 @@ SHARED_KEYS = ("state_map", "assignee", "board", "poll_interval_seconds",
                "admit", "max_active", "order", "leaf_only", "skip_blocked", "exclude_label",
                "prepare_command", "prepare_timeout_seconds",
                "done_gate", "land_command", "land_timeout_seconds", "land_retry_seconds",
-               "merged_base", "retry_on")
+               "merged_base", "retry_on", "reviewer")
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 

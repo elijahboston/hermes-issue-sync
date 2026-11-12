@@ -5,7 +5,9 @@ A Hermes Agent plugin that syncs Hermes kanban cards two-way with issue trackers
 - Inbound: open issues matching a connection's filter become kanban cards. Finished or
   canceled issues are skipped.
 - Outbound: card status changes move the tracker issue to the mapped state; when a
-  card reaches `done`, its completion summary is posted to the issue as a comment.
+  card reaches `done`, the **done gate** decides when the tracker issue goes to Done
+  and the completion summary is posted (`immediate` by default; `merged` / `command`
+  wait until the branch has landed).
 - Blocking: when a worker blocks a card with a question, the question is posted on the
   issue. The first human reply there unblocks the card with the answer.
 - Several connections at once: any mix of Linear workspaces and Jira sites, each with its
@@ -72,7 +74,8 @@ plugins:
 ```
 
 Each connection can override `board`, `assignee`, `state_map`, `poll_interval_seconds`,
-`prepare_command`, `prepare_timeout_seconds` and the
+`prepare_command`, `prepare_timeout_seconds`, `done_gate`, `land_command`,
+`land_timeout_seconds`, `land_retry_seconds`, `merged_base`, `retry_on`, `reviewer` and the
 credential env names. One failing connection never stops the others.
 
 A single tracker can also be set with the top-level settings below (no `connections`).
@@ -231,6 +234,148 @@ instead of failing on it.
 does not expose a tool, command, or API route that sets it.
 
 
+## When is an issue Done? (done gate)
+
+When a kanban card reaches `done`, `done_gate` decides when the tracker issue may move to
+Done and when the completion summary is posted. Unset, it is `immediate` — behaviour is
+exactly as before. Other statuses (`running`, `review`, …) still push as soon as they change.
+
+| key | values | default | meaning |
+|-----|--------|---------|---------|
+| `done_gate` | `immediate` \| `merged` \| `command` | `immediate` | When the tracker issue may go to Done. |
+| `land_command` | string or list of strings | unset | Owner command for `command` mode (required there). |
+| `land_timeout_seconds` | int | 1800 | Kill a land run after this long; counts as exit 2. |
+| `land_retry_seconds` | int | 300 | Wait between runs after exit 1 ("not yet"), and between `merged` checks. |
+| `merged_base` | string | unset | `merged` mode: branch the card branch must reach, e.g. `main`. Required in `merged` mode. |
+| `retry_on` | list of regex strings | unset | Auto-unblock a matching block once (see below). |
+| `reviewer` | profile name | unset | `merged` only: create a review card before the merge check. |
+
+### `immediate`
+
+The card reaching `done` pushes `state_map["done"]` and posts the summary. Same as today.
+
+### `command`
+
+The card reaching `done` does **not** push Done or post the summary yet. The plugin starts
+`land_command` **detached** (a child process in its own session) and returns immediately so
+the dispatcher tick is never blocked. A land command can take many minutes (push, PR, CI).
+
+A string is split with `shlex` (no shell). A list of strings is argv. `~` in the first
+element is expanded. The worker's summary is untrusted text: it is written to a file and
+passed only as `SUMMARY_FILE` — never interpolated into argv or env.
+
+Land command environment (plus the inherited process env):
+
+| env | value |
+|-----|--------|
+| `ISSUE_SYNC_CONNECTION` | connection id |
+| `ISSUE_KEY` | tracker issue key |
+| `ISSUE_URL` | issue URL |
+| `CARD_ID` | kanban card id |
+| `WORKTREE` | card `workspace_path` |
+| `BRANCH` | card `branch_name` |
+| `SUMMARY_FILE` | path of a file holding the worker's summary |
+
+Exit codes:
+
+| exit | meaning |
+|------|---------|
+| **0** | Landed. The plugin pushes Done and posts the summary. |
+| **1** | Not yet. Wait `land_retry_seconds` and run again. |
+| **2** (or anything else, timeout, launch failure) | Failed. See below. |
+
+The run is killed after `land_timeout_seconds` (default 1800) and treated as exit 2. A
+gateway restart does not kill a detached land process; the next pass reads the result file
+under the plugin data folder (`land/<connection>/<card_id>-<attempt>.json`).
+
+`land_command` is required when `done_gate` is `command` (a connection error if missing).
+It is owner-only: set in `config.yaml`. This plugin does not expose a tool, command, or API
+route that sets it.
+
+Example land script:
+
+```python
+#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+
+branch = os.environ["BRANCH"]
+worktree = os.environ["WORKTREE"]
+# exit 1 = not yet (CI still running); 0 = merged; 2 = failed
+try:
+    subprocess.check_call(["git", "push", "-u", "origin", branch], cwd=worktree)
+except subprocess.CalledProcessError:
+    sys.exit(2)
+state = subprocess.check_output(
+    ["gh", "pr", "view", branch, "--json", "state", "-q", ".state"],
+    cwd=worktree, text=True,
+).strip()
+if state == "MERGED":
+    sys.exit(0)
+if state in ("OPEN", "DRAFT"):
+    sys.exit(1)
+sys.exit(2)
+```
+
+A `done` card cannot be blocked, so a landing failure does **not** try to block the card.
+Instead the plugin posts a signed comment on the tracker issue:
+
+> Hermes finished the work but could not land it:
+>
+> *(quoted stdout tail, or stderr if stdout is empty, max ~1500 characters)*
+>
+> Reply here when it's fixed and Hermes will try again.
+
+The failure is posted once per attempt. A human reply (same "not a bot" rule as blocked-card
+answers — comments the plugin signed are ignored) re-queues the land command and is copied
+onto the card as a kanban comment.
+
+### `merged`
+
+No command. Each pass (rate-limited by `land_retry_seconds`) checks whether the card's
+branch has reached `merged_base`, in the card's `workspace_path`:
+
+1. `git fetch origin`
+2. `git merge-base --is-ancestor <branch> origin/<merged_base>` — exit 0 means landed.
+
+**Squash merges** do not keep ancestry, so if `gh` is on `PATH` the plugin also runs
+`gh pr view <branch> --json state -q .state` and treats `MERGED` as landed. Failures of
+`gh` are ignored. Nothing else is run. There is no failure state: it just waits.
+
+`merged_base` is required in `merged` mode (a connection error if missing).
+
+### `reviewer` (merged mode only)
+
+When `done_gate` is `merged` and `reviewer` is set, the plugin creates one review card
+before the merge check:
+
+- title `[<key>] review: <title>`, assignee `reviewer`
+- same worktree (`worktree:<workspace_path>`) and branch
+- idempotency key `issue-sync:<connection>:<tracker>:<key>:review`
+- body is the link marker (so it resolves to the same issue) plus a short instruction to
+  review the branch and complete or block
+
+The merged check starts only after that review card is `done`. Admission and `max_active`
+ignore it, and its own `done` does not trigger landing. A blocked review card asks its
+question on the issue like any card. In other `done_gate` modes `reviewer` is ignored
+(with one warning).
+
+### `retry_on`
+
+A list of case-insensitive regexes. When a card blocks and the latest block reason matches
+any pattern, and this card has not been auto-retried yet, the plugin unblocks it once with
+`issue-sync: automatic retry (block reason matched <pattern>)` and posts nothing on the
+issue. A later matching block on the same card goes through the normal question path.
+Unset means never auto-retry. An invalid regex is a connection error.
+
+```yaml
+        retry_on:
+          - "token.*expired"
+          - "max(imum)? output tokens"
+```
+
+
 ## Commands
 
 - `/issues status`: each connection's tracker, projects, board, last poll, backoff and errors.
@@ -263,18 +408,24 @@ Upstream report: https://github.com/NousResearch/hermes-agent/issues/151126
 - **Network:** calls only the trackers you configure: `https://api.linear.app/graphql` and
   your Jira Cloud site (`https://<site>.atlassian.net`). No telemetry or other services.
 - **Writes to your trackers, as you:** it moves issues between states and posts comments
-  (completion summaries and blocked-card questions) using your own API key. Every comment it
-  writes ends with `— via Hermes issue-sync`.
+  (completion summaries, blocked-card questions, and land-failure notes) using your own API
+  key. Every comment it writes ends with `— via Hermes issue-sync`.
 - **Credentials:** read by name through Hermes's profile secret scope. The plugin stores no
   credentials and never reads `.env` or any credential file itself.
 - **Background work:** on each kanban dispatcher tick it runs one sync pass per connection in
-  a short-lived background thread, at most every `poll_interval_seconds`.
+  a short-lived background thread, at most every `poll_interval_seconds`. When `done_gate` is
+  `command`, a land run is started detached (new session) so a gateway restart does not kill
+  it; the result file is read on a later pass.
 - **Shell commands:** it runs `hermes kanban …` (list, show, create, comment, unblock) as a
   subprocess to read and update the board. If `prepare_command` is set, that owner-set
-  command is also run (no shell, issue text on stdin only). No other commands.
-- **Files:** writes plugin state through `ctx.state` and a status snapshot
-  `pane.json` in its own data folder (`<hermes home>/plugin-data/hermes-issue-sync/`), which
-  the Desktop panel reads through the plugin's own API route. Nothing outside its data folder.
+  command is also run (no shell, issue text on stdin only). If `land_command` is set, that
+  owner-set command is started detached (no shell). In `merged` mode it may run
+  `git fetch` / `git merge-base --is-ancestor` and, if `gh` is on `PATH`, `gh pr view` in
+  the card's worktree. No other commands.
+- **Files:** writes plugin state through `ctx.state`, land result/summary files under
+  `land/` in its data folder, and a status snapshot `pane.json` in
+  `<hermes home>/plugin-data/hermes-issue-sync/`, which the Desktop panel reads through the
+  plugin's own API route. Nothing outside its data folder.
 - **Desktop:** the panel, chip and card badges use only the Desktop plugin SDK.
 
 ## Development

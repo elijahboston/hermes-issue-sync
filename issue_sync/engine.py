@@ -249,6 +249,11 @@ class SyncEngine:
                                   "land_retry_seconds")
         self.merged_base = str(settings.get("merged_base") or "").strip()
         self.retry_on = _retry_patterns(settings.get("retry_on"))
+        reviewer = str(settings.get("reviewer") or "").strip()
+        if reviewer and self.done_gate != "merged":
+            logger.warning("issue-sync: reviewer is only used when done_gate is merged; ignoring it")
+            reviewer = ""
+        self.reviewer = reviewer or None
         self._land_launcher = land_launcher
         self._git_runner = git_runner
         self._land_dir = Path(land_dir) if land_dir is not None else None
@@ -354,6 +359,7 @@ class SyncEngine:
             1 for card in cards
             if self.owns(link_from_card(card))
             and str(card.get("status") or "").casefold() in ACTIVE_STATUSES
+            and not self._is_review_card(card)
         )
         skips: dict[str, str] = {}
         candidates: list[Issue] = []
@@ -484,6 +490,8 @@ class SyncEngine:
         link = link_from_card(card)
         if link is None or not self.owns(link):
             return 0
+        if self._is_review_card(card):
+            return 0
         status = card.get("status")
         if (
             status == "done"
@@ -572,6 +580,11 @@ class SyncEngine:
                 self.last_landing[link.key] = "running"
                 return False
             return self._apply_land_exit(link, card, landing, outcome)
+
+        if self.done_gate == "merged" and self.reviewer:
+            if not self._review_gate_open(link, card, show):
+                self.last_landing[link.key] = status or "waiting"
+                return False
 
         next_try = landing.get("next_try_at")
         try:
@@ -787,6 +800,53 @@ class SyncEngine:
         from .pane import data_dir
         folder = data_dir()
         return folder if folder is not None else Path(tempfile.gettempdir()) / "hermes-issue-sync"
+
+    def _is_review_card(self, card: Mapping[str, Any]) -> bool:
+        link = link_from_card(card)
+        if link is None:
+            return False
+        review_id = self.state.link(link.id).get("review_card_id")
+        return bool(review_id) and card.get("id") == review_id
+
+    def _review_gate_open(self, link: Link, card: Mapping[str, Any],
+                         show: Mapping[str, Any] | None) -> bool:
+        """True when the merged check may start (reviewer unset, or review card is done)."""
+        review_id = self.state.link(link.id).get("review_card_id")
+        if not review_id:
+            self._create_review_card(link, card, show)
+            return False
+        try:
+            review = self.kanban.show_card(review_id)
+        except Exception:
+            self._create_review_card(link, card, show)
+            return False
+        return (review.get("task") or {}).get("status") == "done"
+
+    def _create_review_card(self, link: Link, card: Mapping[str, Any],
+                           show: Mapping[str, Any] | None) -> str | None:
+        show = self._ensure_show(card, show)
+        task = show.get("task") or dict(card)
+        worktree = str(task.get("workspace_path") or card.get("workspace_path") or "")
+        branch = str(task.get("branch_name") or card.get("branch_name") or "")
+        raw_title = str(task.get("title") or card.get("title") or "")
+        issue_title = raw_title.split("] ", 1)[1] if raw_title.startswith("[") and "] " in raw_title else raw_title
+        title = f"[{link.key}] review: {issue_title}"
+        marker = build_marker(link.tracker, link.key, link.url, self.conn or link.conn)
+        instruction = (
+            f"Review branch `{branch or 'the card branch'}` and complete this card when the work "
+            f"looks good, or block with a question."
+        )
+        body = f"{marker}\n\n{instruction}\n"
+        review_id = self.kanban.create_card(
+            title, body,
+            idempotency_key=f"{idempotency_key(link.tracker, link.key, self.conn)}:review",
+            assignee=self.reviewer,
+            workspace=f"worktree:{worktree}" if worktree else None,
+            branch=branch or None,
+        )
+        self.state.update_link(link.id, review_card_id=review_id)
+        return review_id
+
 
 
     # ── blocking questions (CORE-605) ─────────────────────────────────────
