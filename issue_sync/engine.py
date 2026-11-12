@@ -35,6 +35,8 @@ MIN_BACKOFF = 1.0
 MAPPABLE_STATUSES = frozenset({"ready", "running", "blocked", "review", "done"})
 # Cards in these statuses count toward ``max_active``.
 ACTIVE_STATUSES = frozenset({"todo", "ready", "running", "review", "scheduled"})
+WOULD_ADMIT = "would-admit"
+
 
 
 def _poll_interval(value: Any) -> float:
@@ -351,43 +353,72 @@ class SyncEngine:
         finally:
             self._lock.release()
 
-    def _poll_inbound(self, cards: Iterable[Mapping[str, Any]]) -> int:
-        tracker = self.adapter.name
+    def plan_inbound(self, cards: Iterable[Mapping[str, Any]]) -> list[tuple[Issue, str]]:
+        """Decide ``would-admit`` vs skip for every fetched issue. Never creates cards.
+
+        Early skips (closed, linked, excluded, parent, blocked) stay in fetch order;
+        remaining issues follow ``order``, with ``cap`` applied as if every admit succeeds
+        (prepare skips are not known yet).
+        """
+        early, candidates, remaining = self._inbound_candidates(cards)
+        decisions = list(early)
+        admitted = 0
+        for issue in candidates:
+            if remaining is not None and admitted >= remaining:
+                decisions.append((issue, "cap"))
+                continue
+            decisions.append((issue, WOULD_ADMIT))
+            admitted += 1
+        return decisions
+
+    def _inbound_candidates(
+        self, cards: Iterable[Mapping[str, Any]],
+    ) -> tuple[list[tuple[Issue, str]], list[Issue], int | None]:
         cards = list(cards)
         linked = {link.key for link in map(link_from_card, cards) if self.owns(link)}
-        active = sum(
+        active = self._owned_active(cards)
+        early: list[tuple[Issue, str]] = []
+        candidates: list[Issue] = []
+        for issue in self.adapter.fetch_issues(self.filter):
+            reason = self._skip_reason(issue, linked)
+            if reason is not None:
+                early.append((issue, reason))
+            else:
+                candidates.append(issue)
+        candidates.sort(key=lambda issue: _issue_sort_key(issue, self.order))
+        remaining = None if self.max_active is None else max(0, self.max_active - active)
+        return early, candidates, remaining
+
+    def _owned_active(self, cards: Iterable[Mapping[str, Any]]) -> int:
+        return sum(
             1 for card in cards
             if self.owns(link_from_card(card))
             and str(card.get("status") or "").casefold() in ACTIVE_STATUSES
             and not self._is_review_card(card)
         )
-        skips: dict[str, str] = {}
-        candidates: list[Issue] = []
-        for issue in self.adapter.fetch_issues(self.filter):
-            if issue.closed:
-                skips[issue.key] = "closed"
-                continue
-            if issue.key in linked:
-                skips[issue.key] = "linked"
-                continue
-            if self._excluded(issue):
-                skips[issue.key] = "excluded"
-                continue
-            if self.leaf_only and issue.open_children:
-                skips[issue.key] = "parent"
-                continue
-            if self.skip_blocked and issue.open_blockers:
-                skips[issue.key] = "blocked"
-                continue
-            candidates.append(issue)
-        candidates.sort(key=lambda issue: _issue_sort_key(issue, self.order))
-        remaining = None if self.max_active is None else max(0, self.max_active - active)
+
+    def _skip_reason(self, issue: Issue, linked: set[str]) -> str | None:
+        if issue.closed:
+            return "closed"
+        if issue.key in linked:
+            return "linked"
+        if self._excluded(issue):
+            return "excluded"
+        if self.leaf_only and issue.open_children:
+            return "parent"
+        if self.skip_blocked and issue.open_blockers:
+            return "blocked"
+        return None
+
+    def _poll_inbound(self, cards: Iterable[Mapping[str, Any]]) -> int:
+        early, candidates, remaining = self._inbound_candidates(cards)
+        skips = {issue.key: reason for issue, reason in early}
         created = 0
         for issue in candidates:
             if remaining is not None and created >= remaining:
                 skips[issue.key] = "cap"
                 continue
-            link = Link(tracker, issue.key, issue.url, self.conn)
+            link = Link(self.adapter.name, issue.key, issue.url, self.conn)
             try:
                 title, body, assignee, extra = self._shape_card(issue)
                 if extra is None:
@@ -395,7 +426,7 @@ class SyncEngine:
                     continue
                 card_id = self.kanban.create_card(
                     title, body,
-                    idempotency_key=idempotency_key(tracker, issue.key, self.conn),
+                    idempotency_key=idempotency_key(self.adapter.name, issue.key, self.conn),
                     assignee=assignee, **extra,
                 )
             except RateLimited:
@@ -408,10 +439,11 @@ class SyncEngine:
                 logger.warning("issue-sync: could not create a card for %s: %s", link.id, _error_text(exc))
                 continue
             self.state.update_link(link.id, card_id=card_id, last_pushed_state=issue.state, last_error=None)
-            linked.add(issue.key)
             created += 1
         self.last_skips = skips
         return created
+
+
 
 
     def _shape_card(self, issue: Issue) -> tuple[str, str, str | None, dict[str, Any] | None]:

@@ -48,6 +48,7 @@ class StubCtx:
         self.config = dict(config or {})
         self.hooks: dict[str, Callable[..., Any]] = {}
         self.commands: dict[str, tuple[Callable[..., Any], dict[str, Any]]] = {}
+        self.cli_commands: dict[str, dict[str, Any]] = {}
         self.state = memory_store()
         self.profile_name = "default"
 
@@ -59,6 +60,12 @@ class StubCtx:
 
     def register_command(self, name: str, handler: Callable[..., Any], **kwargs: Any) -> None:
         self.commands[name] = (handler, kwargs)
+
+    def register_cli_command(self, name: str, help: str, setup_fn: Callable[..., Any],
+                             handler_fn: Callable[..., Any] | None = None,
+                             description: str = "") -> None:
+        self.cli_commands[name] = dict(help=help, setup_fn=setup_fn, handler_fn=handler_fn,
+                                       description=description)
 
 
 @pytest.fixture

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import contextvars
 import logging
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from typing import Any, Callable, Mapping
 
 from .issue_sync.adapters import get_adapter
 from .issue_sync.connections import Connection, parse_connections
+from .issue_sync import dry_run as dry_run_mod
 from .issue_sync.engine import SyncEngine
 from .issue_sync import pane
 from .issue_sync.kanban import KanbanClient
@@ -27,7 +29,7 @@ TRACKER_SETTING = "plugins.entries.hermes-issue-sync.settings.tracker"
 CONNECTIONS_SETTING = "plugins.entries.hermes-issue-sync.settings.connections"
 ENABLED_SETTING = "plugins.entries.hermes-issue-sync.settings.enabled"
 HOOKS = ("on_kanban_dispatch_tick", "kanban_task_claimed", "kanban_task_completed", "kanban_task_blocked")
-USAGE = "usage: /issues [status|show]"
+USAGE = "usage: /issues [status|show|dry-run]"
 SHOW_EVENT = "pane.show"
 
 _DEFAULTS: dict[str, Any] = {
@@ -273,6 +275,13 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
         sub = (raw_args or "").strip().lower()
         if sub == "show":
             return show_pane()
+        if sub == "dry-run":
+            try:
+                text, _code = dry_run_mod.run_runners(runners)
+                return text
+            except Exception as exc:
+                logger.warning("issue-sync: dry-run failed: %s: %s", type(exc).__name__, exc)
+                return f"issue-sync: dry-run unavailable ({type(exc).__name__}: {exc})"
         if sub not in ("", "status"):
             return USAGE
         try:
@@ -281,11 +290,49 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
             logger.warning("issue-sync: status failed: %s: %s", type(exc).__name__, exc)
             return f"issue-sync: status unavailable ({type(exc).__name__}: {exc})"
 
+    def _setup_issues_cli(subparser: Any) -> None:
+        subs = subparser.add_subparsers(dest="issues_command", required=True)
+        dry = subs.add_parser(
+            "dry-run",
+            help="Show what would be admitted and landed, without changing anything",
+        )
+        dry.add_argument("--connection", metavar="ID", help="Only this connection")
+        dry.add_argument(
+            "--with-prepare", action="store_true",
+            help="Run prepare_command for would-admit issues (may create worktrees)",
+        )
+        dry.add_argument("--json", action="store_true", dest="as_json",
+                         help="Print one JSON object")
+
+    def _cli_handler(args: Any) -> int:
+        cmd = getattr(args, "issues_command", None)
+        if cmd == "dry-run":
+            try:
+                text, code = dry_run_mod.run_runners(
+                    runners,
+                    connection=getattr(args, "connection", None),
+                    with_prepare=bool(getattr(args, "with_prepare", False)),
+                    as_json=bool(getattr(args, "as_json", False)),
+                )
+            except Exception as exc:
+                print(f"issue-sync: dry-run failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+                return 1
+            print(text)
+            return code
+        print(f"unknown issues subcommand {cmd!r}", file=sys.stderr)
+        return 1
+
     ctx.register_command(
         "issues",
         handler=issues_command,
         description="Issue tracker sync for kanban cards",
-        args_hint="[status|show]",
+        args_hint="[status|show|dry-run]",
+    )
+    ctx.register_cli_command(
+        name="issues",
+        help="Issue tracker sync: dry-run admission and landing",
+        setup_fn=_setup_issues_cli,
+        handler_fn=_cli_handler,
     )
 
     enabled = _enabled(settings)

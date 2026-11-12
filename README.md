@@ -380,6 +380,9 @@ Unset means never auto-retry. An invalid regex is a connection error.
 
 - `/issues status`: each connection's tracker, projects, board, last poll, backoff and errors.
 - `/issues show`: toggle the Issue Sync panel in the connected Desktop app.
+- `/issues dry-run`: what the next inbound pass would admit and what the done gate
+  would do next, without creating, moving, or commenting. Same report as
+  `hermes issues dry-run` (`--connection`, `--json`; `--with-prepare` is CLI-only).
 
 In Desktop, the status-bar chip also toggles the panel. Closing the panel keeps sync running.
 
