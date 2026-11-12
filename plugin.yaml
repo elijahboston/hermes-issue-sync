@@ -18,8 +18,9 @@ config_schema:
     description: >-
       Several trackers or projects at once. Each entry is a mapping with id (lowercase, unique),
       tracker (linear or jira), projects (list), label, and optionally board, state_map, assignee,
-      the *_env credential names, and admission keys (admit, max_active, order, leaf_only,
-      skip_blocked, exclude_label); missing keys fall back to the top-level settings below.
+      the *_env credential names, admission keys (admit, max_active, order, leaf_only,
+      skip_blocked, exclude_label), prepare_command, and prepare_timeout_seconds; missing keys
+      fall back to the top-level settings below.
       When empty, the single-tracker settings (tracker, filter, ...) are used instead.
   tracker:
     type: str
@@ -118,3 +119,17 @@ config_schema:
     description: >-
       Never admit an issue carrying this label (case-insensitive), or whose parent,
       grandparent or great-grandparent carries it. Empty means no extra exclusion.
+  prepare_command:
+    type: str
+    default: ""
+    description: >-
+      Command run once before each card is created. A string is split with shlex (no shell);
+      a list of strings is used as argv. ~ in the first element is expanded. Issue data is
+      JSON on stdin, never interpolated into the command. Empty means no hook. Owner-only:
+      set in config.yaml; nothing in this plugin writes this setting.
+  prepare_timeout_seconds:
+    type: int
+    default: 120
+    description: >-
+      Seconds before the prepare command is killed. A timeout counts as a failure; the issue
+      is retried on the next pass and does not consume a max_active slot. Default 120.

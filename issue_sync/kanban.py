@@ -107,10 +107,22 @@ class KanbanClient:
             raise KanbanError(f"kanban show {task_id} returned no task")
         return data
 
-    def create_card(self, title: str, body: str, *, idempotency_key: str, assignee: str | None = None) -> str:
+    def create_card(self, title: str, body: str, *, idempotency_key: str, assignee: str | None = None,
+                    workspace: str | None = None, branch: str | None = None, skills: Sequence[str] = (),
+                    model: str | None = None, provider: str | None = None) -> str:
         args = ["create", title, "--body-file", "-", "--idempotency-key", idempotency_key]
         if assignee:
             args += ["--assignee", assignee]
+        if workspace:
+            args += ["--workspace", workspace]
+        if branch:
+            args += ["--branch", branch]
+        for skill in skills or ():
+            args += ["--skill", skill]
+        if model:
+            args += ["--model", model]
+            if provider:
+                args += ["--provider", provider]
         args.append("--json")
         stdout = self._run(args, input=body)
         card_id = _created_id(stdout)
@@ -135,6 +147,7 @@ class FakeKanban:
         self.comments: dict[str, list[dict[str, Any]]] = {}
         self.idempotency_keys: dict[str, str] = {}
         self.events: dict[str, list[dict[str, Any]]] = {}
+        self.create_kwargs: list[dict[str, Any]] = []
         self._failures: dict[str, list[Exception]] = {}
         self._seq = itertools.count(1)
 
@@ -200,13 +213,22 @@ class FakeKanban:
                 "parents": [], "children": [], "comments": copy.deepcopy(self.comments[task_id]),
                 "events": copy.deepcopy(self.events.get(task_id, [])), "runs": []}
 
-    def create_card(self, title: str, body: str, *, idempotency_key: str, assignee: str | None = None) -> str:
+    def create_card(self, title: str, body: str, *, idempotency_key: str, assignee: str | None = None,
+                    workspace: str | None = None, branch: str | None = None, skills: Sequence[str] = (),
+                    model: str | None = None, provider: str | None = None) -> str:
         self.calls.append(("create_card", title, body, idempotency_key, assignee))
+        self.create_kwargs.append({
+            "workspace": workspace, "branch": branch,
+            "skills": tuple(skills) if skills else (), "model": model, "provider": provider,
+        })
         self._maybe_fail("create_card")
         for task_id, key in self.idempotency_keys.items():
             if key == idempotency_key and self.cards[task_id]["status"] != "archived":
                 return task_id
-        return self.add_card(title, body, assignee=assignee, idempotency_key=idempotency_key)
+        task_id = self.add_card(title, body, assignee=assignee, idempotency_key=idempotency_key)
+        self.cards[task_id].update(workspace=workspace, branch=branch,
+                                   skills=tuple(skills) if skills else (), model=model, provider=provider)
+        return task_id
 
     def comment(self, task_id: str, text: str) -> None:
         self.calls.append(("comment", task_id, text))

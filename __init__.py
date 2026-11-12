@@ -51,6 +51,8 @@ _DEFAULTS: dict[str, Any] = {
     "leaf_only": False,
     "skip_blocked": True,
     "exclude_label": "",
+    "prepare_command": "",
+    "prepare_timeout_seconds": 120,
 }
 
 _logged: set[str] = set()

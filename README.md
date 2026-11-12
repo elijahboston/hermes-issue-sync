@@ -71,7 +71,8 @@ plugins:
             state_map: {ready: Selected for Development, running: In Progress, done: Done}
 ```
 
-Each connection can override `board`, `assignee`, `state_map`, `poll_interval_seconds` and the
+Each connection can override `board`, `assignee`, `state_map`, `poll_interval_seconds`,
+`prepare_command`, `prepare_timeout_seconds` and the
 credential env names. One failing connection never stops the others.
 
 A single tracker can also be set with the top-level settings below (no `connections`).
@@ -160,6 +161,72 @@ When a key is omitted, behaviour is unchanged except two safety defaults: `max_a
         exclude_label: hold
 ```
 
+## Shaping cards with a prepare script
+
+Set `prepare_command` on a connection (or at the top level) to run an owner-set command
+once before each card is created. Use it to pick a worktree, choose a model, or replace
+the card body. With the key unset, inbound create is unchanged.
+
+A string is split with `shlex` (no shell). A list of strings is argv. `~` in the first
+element is expanded. Issue data is untrusted (anyone who can file a ticket writes it) and
+arrives **only** as JSON on stdin — never interpolated into argv.
+
+| key | type | default | meaning |
+|-----|------|---------|---------|
+| `prepare_command` | string or list of strings | unset | Command run once per new card. |
+| `prepare_timeout_seconds` | int | 120 | Kill the command after this many seconds; that counts as a failure. |
+
+```yaml
+        prepare_command: ~/bin/issue-sync-prepare
+        prepare_timeout_seconds: 120
+```
+
+Stdin is one JSON object:
+
+```json
+{"connection": "lin", "tracker": "linear", "key": "ABC-1", "title": "Fix login",
+ "url": "https://linear.app/...", "body": "...", "labels": ["agent"],
+ "priority": 2, "estimate": 1, "created_at": "2026-01-01T00:00:00Z", "state": "Todo"}
+```
+
+Stdout must be one JSON object. All keys are optional:
+
+| key | type | effect |
+|-----|------|--------|
+| `body` | string | Card body after the issue-sync marker (the marker stays line 1). |
+| `title` | string | Card title. |
+| `assignee` | string | Hermes profile assigned to the card. |
+| `workspace` | string | Passed to `kanban create --workspace` (`worktree:/abs/path`, `dir:/abs/path`, `scratch`). |
+| `branch` | string | `--branch`. |
+| `skills` | list of strings | Repeated `--skill`. |
+| `model` | string | `--model`. |
+| `provider` | string | `--provider`; only valid together with `model`. |
+
+The command should create nothing itself — only print JSON. Example:
+
+```python
+#!/usr/bin/env python3
+import json, sys
+
+issue = json.load(sys.stdin)
+print(json.dumps({
+    "workspace": "scratch",
+    "branch": f"issue/{issue['key']}",
+    "skills": ["kanban"],
+    "title": f"[{issue['key']}] {issue['title']}",
+}))
+```
+
+Exit 0 with `{"skip": true, "reason": "disk is low"}` to leave the issue for a later pass
+(no card, no error). Any other failure — non-zero exit, timeout, missing executable, stdout
+that is not a JSON object, wrong types, `provider` without `model` — creates no card, records
+the error, and retries next pass. Failures and skips do not consume a `max_active` slot, so
+later candidates in the same pass can still be admitted.
+
+`prepare_command` is read only from the owner's plugin settings (`config.yaml`). This plugin
+does not expose a tool, command, or API route that sets it.
+
+
 ## Commands
 
 - `/issues status`: each connection's tracker, projects, board, last poll, backoff and errors.
@@ -199,7 +266,8 @@ Upstream report: https://github.com/NousResearch/hermes-agent/issues/151126
 - **Background work:** on each kanban dispatcher tick it runs one sync pass per connection in
   a short-lived background thread, at most every `poll_interval_seconds`.
 - **Shell commands:** it runs `hermes kanban …` (list, show, create, comment, unblock) as a
-  subprocess to read and update the board. No other commands.
+  subprocess to read and update the board. If `prepare_command` is set, that owner-set
+  command is also run (no shell, issue text on stdin only). No other commands.
 - **Files:** writes plugin state through `ctx.state` and a status snapshot
   `pane.json` in its own data folder (`<hermes home>/plugin-data/hermes-issue-sync/`), which
   the Desktop panel reads through the plugin's own API route. Nothing outside its data folder.

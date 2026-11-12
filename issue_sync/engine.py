@@ -14,9 +14,10 @@ import time
 from typing import Any, Callable, Iterable, Mapping
 
 from .adapters.base import Issue, RateLimited, TrackerAdapter
+from .links import (Link, asked_note, build_marker, card_body, card_title, done_note, has_done_note,
+                    has_note, idempotency_key, link_from_card, parse_marker)
+from .prepare import PrepareError, run_prepare
 from .signature import sign, strip_signature
-from .links import (Link, asked_note, card_body, card_title, done_note, has_done_note, has_note,
-                    idempotency_key, link_from_card)
 from .state import SyncState
 
 logger = logging.getLogger(__name__)
@@ -101,10 +102,50 @@ def _issue_sort_key(issue: Issue, order: str) -> tuple:
     return (rank, estimate, created)
 
 
+DEFAULT_PREPARE_TIMEOUT = 120.0
+
+
+def _prepare_command(value: Any) -> str | list[str] | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        argv = [str(part) for part in value]
+        return argv or None
+    logger.warning("issue-sync: prepare_command must be a string or list; ignoring it")
+    return None
+
+
+def _prepare_timeout(value: Any) -> float:
+    if isinstance(value, bool) or value in (None, ""):
+        return DEFAULT_PREPARE_TIMEOUT
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        logger.warning("issue-sync: prepare_timeout_seconds %r is not a number; using %g",
+                       value, DEFAULT_PREPARE_TIMEOUT)
+        return DEFAULT_PREPARE_TIMEOUT
+    return seconds if math.isfinite(seconds) and seconds > 0 else DEFAULT_PREPARE_TIMEOUT
+
+
+def _prepared_card_body(tracker: str, key: str, url: str, conn: str, body: str) -> str:
+    """Marker on line 1, then a blank line, then the hook body (a leading marker stripped)."""
+    marker = build_marker(tracker, key, url, conn)
+    lines = body.splitlines()
+    if lines and parse_marker(lines[0]) is not None:
+        lines = lines[1:]
+    rest = "\n".join(lines)
+    if rest.strip():
+        return f"{marker}\n\n{rest}\n"
+    return f"{marker}\n"
+
+
 class SyncEngine:
     def __init__(self, adapter: TrackerAdapter, kanban: Any, state: SyncState,
                  settings: Mapping[str, Any] | None, clock: Callable[[], float] = time.time,
-                 *, conn: str = "", owns_legacy: bool = False) -> None:
+                 *, conn: str = "", owns_legacy: bool = False,
+                 prepare_runner: Callable[..., Any] | None = None) -> None:
         settings = settings if isinstance(settings, Mapping) else {}
         self.adapter = adapter
         # Connection id written into new card markers; "" for the single-tracker setup.
@@ -127,6 +168,9 @@ class SyncEngine:
         self.skip_blocked = _as_bool(settings.get("skip_blocked"), True)
         exclude = settings.get("exclude_label")
         self.exclude_label = exclude.strip() if isinstance(exclude, str) else ""
+        self.prepare_command = _prepare_command(settings.get("prepare_command"))
+        self.prepare_timeout = _prepare_timeout(settings.get("prepare_timeout_seconds"))
+        self._prepare_runner = prepare_runner
         # Why the last inbound pass skipped each issue key (for a later dry-run command).
         self.last_skips: dict[str, str] = {}
         # Cards of this connection seen by the last full pass; the sync pane reads them.
@@ -255,16 +299,21 @@ class SyncEngine:
                 continue
             link = Link(tracker, issue.key, issue.url, self.conn)
             try:
+                title, body, assignee, extra = self._shape_card(issue)
+                if extra is None:
+                    skips[issue.key] = "prepare-skip"
+                    continue
                 card_id = self.kanban.create_card(
-                    card_title(issue.key, issue.title),
-                    card_body(tracker, issue.key, issue.url, issue.body, self.conn),
+                    title, body,
                     idempotency_key=idempotency_key(tracker, issue.key, self.conn),
-                    assignee=self.assignee,
+                    assignee=assignee, **extra,
                 )
             except RateLimited:
                 self.last_skips = skips
                 raise
             except Exception as exc:
+                if isinstance(exc, PrepareError):
+                    skips[issue.key] = "prepare-failed"
                 self.state.update_link(link.id, last_error=_error_text(exc))
                 logger.warning("issue-sync: could not create a card for %s: %s", link.id, _error_text(exc))
                 continue
@@ -273,6 +322,49 @@ class SyncEngine:
             created += 1
         self.last_skips = skips
         return created
+
+
+    def _shape_card(self, issue: Issue) -> tuple[str, str, str | None, dict[str, Any] | None]:
+        """Title, body, assignee, create_card extras. extras is None when the prepare hook skips."""
+        tracker = self.adapter.name
+        title = card_title(issue.key, issue.title)
+        body = card_body(tracker, issue.key, issue.url, issue.body, self.conn)
+        assignee = self.assignee
+        extra: dict[str, Any] = {}
+        if not self.prepare_command:
+            return title, body, assignee, extra
+        kwargs: dict[str, Any] = {}
+        if self._prepare_runner is not None:
+            kwargs["runner"] = self._prepare_runner
+        prepared = run_prepare(
+            self.prepare_command,
+            {
+                "connection": self.conn, "tracker": tracker, "key": issue.key,
+                "title": issue.title, "url": issue.url, "body": issue.body,
+                "labels": list(issue.labels), "priority": issue.priority,
+                "estimate": issue.estimate, "created_at": issue.created_at, "state": issue.state,
+            },
+            timeout=self.prepare_timeout, **kwargs,
+        )
+        if prepared.skip:
+            return title, body, assignee, None
+        if prepared.title is not None:
+            title = prepared.title
+        if prepared.body is not None:
+            body = _prepared_card_body(tracker, issue.key, issue.url, self.conn, prepared.body)
+        if prepared.assignee is not None:
+            assignee = prepared.assignee.strip() or None
+        if prepared.workspace:
+            extra["workspace"] = prepared.workspace
+        if prepared.branch:
+            extra["branch"] = prepared.branch
+        if prepared.skills:
+            extra["skills"] = prepared.skills
+        if prepared.model:
+            extra["model"] = prepared.model
+            if prepared.provider:
+                extra["provider"] = prepared.provider
+        return title, body, assignee, extra
 
     def _excluded(self, issue: Issue) -> bool:
         needle = self.exclude_label.casefold()

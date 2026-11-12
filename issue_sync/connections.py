@@ -15,7 +15,8 @@ from typing import Any, Mapping
 # Settings each connection may override; anything missing falls back to the top-level value.
 SHARED_KEYS = ("state_map", "assignee", "board", "poll_interval_seconds",
                "api_key_env", "base_url_env", "email_env", "token_env",
-               "admit", "max_active", "order", "leaf_only", "skip_blocked", "exclude_label")
+               "admit", "max_active", "order", "leaf_only", "skip_blocked", "exclude_label",
+               "prepare_command", "prepare_timeout_seconds")
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
