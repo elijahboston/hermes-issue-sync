@@ -28,7 +28,8 @@ if [ ! -d "$repo" ]; then
 fi
 
 branch="issue/${key}"
-root="$repo/.issue-sync-worktrees"
+# Worktrees live beside the repo, never inside it (an untracked dir would dirty the checkout).
+root="${repo%/}.worktrees"
 path="$root/$key"
 
 cd "$repo"

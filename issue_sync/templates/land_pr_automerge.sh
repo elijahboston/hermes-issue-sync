@@ -32,9 +32,9 @@ if ! gh pr view "$BRANCH" --json state >/dev/null 2>&1; then
 			exit 2
 		fi
 	fi
-	gh pr merge --auto --squash >/dev/null 2>&1 || true
+	gh pr merge "$BRANCH" --auto --squash >/dev/null 2>&1 || true
 else
-	gh pr merge --auto --squash >/dev/null 2>&1 || true
+	gh pr merge "$BRANCH" --auto --squash >/dev/null 2>&1 || true
 fi
 
 state=$(gh pr view "$BRANCH" --json state -q .state)
