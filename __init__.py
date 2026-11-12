@@ -45,6 +45,12 @@ _DEFAULTS: dict[str, Any] = {
     "base_url_env": "JIRA_BASE_URL",
     "email_env": "JIRA_EMAIL",
     "token_env": "JIRA_API_TOKEN",
+    "admit": "label",
+    "max_active": 0,  # 0 = unlimited
+    "order": "priority",
+    "leaf_only": False,
+    "skip_blocked": True,
+    "exclude_label": "",
 }
 
 _logged: set[str] = set()
@@ -63,7 +69,8 @@ def _read_settings(ctx: Any) -> dict[str, Any]:
     for key, default in _DEFAULTS.items():
         value = ctx.get_config(key, default=default)
         settings[key] = default if value is None else value
-    for key in ("tracker", "assignee", "board", "api_key_env", "base_url_env", "email_env", "token_env"):
+    for key in ("tracker", "assignee", "board", "api_key_env", "base_url_env", "email_env", "token_env",
+                "admit", "order", "exclude_label"):
         settings[key] = str(settings[key]).strip()
     # A credential name saved blank (e.g. a cleared settings field) means "use the default name".
     for key in ("api_key_env", "base_url_env", "email_env", "token_env"):

@@ -277,3 +277,59 @@ def test_fetch_issues_marks_done_category_as_closed(secrets):
         issue_node(3, "Done", category="done"), issue_node(4, "Won't Do", category="done")]}))
     issues = adapter(t).fetch_issues({"project": "TSS"})
     assert [i.closed for i in issues] == [False, False, True, True]
+
+
+def test_build_jql_admit_all_drops_label():
+    assert build_jql({"project": "TSS", "admit": "all"}) == 'project = "TSS" ORDER BY created ASC'
+    assert build_jql({"projects": ["TSS", "OPS"], "admit": "all"}) == \
+        'project in ("TSS", "OPS") ORDER BY created ASC'
+
+
+def test_fetch_issues_maps_admission_fields(secrets):
+    node = issue_node(1)
+    node["fields"].update({
+        "priority": {"name": "Highest"},
+        "created": "2026-01-01T00:00:00.000+0000",
+        "subtasks": [
+            {"key": "TSS-9", "fields": {"status": {"statusCategory": {"key": "indeterminate"}}}},
+            {"key": "TSS-10", "fields": {"status": {"statusCategory": {"key": "done"}}}},
+        ],
+        "issuelinks": [
+            {"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+             "inwardIssue": {"key": "TSS-8", "fields": {"status": {"statusCategory": {"key": "new"}}}}},
+            {"type": {"name": "Blocks", "inward": "is blocked by", "outward": "blocks"},
+             "inwardIssue": {"key": "TSS-12", "fields": {"status": {"statusCategory": {"key": "done"}}}}},
+            {"type": {"name": "Relates", "inward": "relates to", "outward": "relates to"},
+             "inwardIssue": {"key": "TSS-11", "fields": {"status": {"statusCategory": {"key": "new"}}}}},
+        ],
+        "parent": {"key": "TSS-100", "fields": {"labels": ["hold", "epic"]}},
+    })
+    t = Transport(step("POST", "/rest/api/3/search/jql", {"isLast": True, "issues": [node]}))
+    issue = adapter(t).fetch_issues({"project": "TSS"})[0]
+    assert issue.priority == 1 and issue.estimate is None
+    assert issue.created_at == "2026-01-01T00:00:00.000+0000"
+    assert issue.open_children == ("TSS-9",)
+    assert issue.open_blockers == ("TSS-8",)
+    assert issue.ancestor_labels == ("hold", "epic")
+
+
+def test_fetch_issues_maps_priority_names(secrets):
+    names = ["Blocker", "Critical", "Medium", "Minor", "Unknown", None]
+    nodes = []
+    for i, name in enumerate(names, 1):
+        node = issue_node(i)
+        node["fields"]["priority"] = {"name": name} if name else None
+        nodes.append(node)
+    t = Transport(step("POST", "/rest/api/3/search/jql", {"isLast": True, "issues": nodes}))
+    issues = adapter(t).fetch_issues({"project": "TSS"})
+    assert [i.priority for i in issues] == [1, 2, 3, 4, 0, 0]
+
+
+def test_fetch_issues_admit_all_drops_label_clause(secrets):
+    def check(query, body):
+        assert body["jql"] == 'project = "TSS" ORDER BY created ASC'
+        assert "priority" in body["fields"] and "issuelinks" in body["fields"]
+
+    t = Transport(step("POST", "/rest/api/3/search/jql", {"isLast": True, "issues": []}, check=check))
+    assert adapter(t, admit="all").fetch_issues({"project": "TSS", "label": "agent"}) == []
+    t.done()

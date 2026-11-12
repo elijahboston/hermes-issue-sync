@@ -28,7 +28,8 @@ DEFAULT_TOKEN_ENV = "JIRA_API_TOKEN"
 DEFAULT_LABEL = "agent"
 PAGE_SIZE = 50
 COMMENT_PAGE_SIZE = 100
-SEARCH_FIELDS = ["summary", "description", "status", "labels", "updated"]
+SEARCH_FIELDS = ["summary", "description", "status", "labels", "updated",
+                 "priority", "subtasks", "issuelinks", "parent", "created"]
 
 _TZ_NO_COLON = re.compile(r"([+-]\d{2})(\d{2})$")
 
@@ -58,8 +59,75 @@ def build_jql(filter: Mapping[str, Any]) -> str:
         clauses.append(f"project = {_jql_string(projects[0])}")
     elif projects:
         clauses.append("project in (" + ", ".join(_jql_string(p) for p in projects) + ")")
-    clauses.append(f"labels = {_jql_string(filter.get('label') or DEFAULT_LABEL)}")
+    admit = str(filter.get("admit") or "label").strip().lower()
+    if admit != "all":
+        clauses.append(f"labels = {_jql_string(filter.get('label') or DEFAULT_LABEL)}")
     return " AND ".join(clauses) + " ORDER BY created ASC"
+
+_PRIORITY_RANK = {
+    "highest": 1, "blocker": 1,
+    "high": 2, "critical": 2,
+    "medium": 3,
+    "low": 4, "lowest": 4, "minor": 4, "trivial": 4,
+}
+
+
+def _open_status(status: Mapping[str, Any] | None) -> bool:
+    return ((status or {}).get("statusCategory") or {}).get("key") != "done"
+
+
+def _priority(fields: Mapping[str, Any]) -> int:
+    name = str(((fields.get("priority") or {}).get("name") or "")).strip().casefold()
+    return _PRIORITY_RANK.get(name, 0)
+
+
+def _open_children(fields: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        str(sub["key"]) for sub in fields.get("subtasks") or []
+        if sub.get("key") and _open_status((sub.get("fields") or {}).get("status"))
+    )
+
+
+def _open_blockers(fields: Mapping[str, Any]) -> tuple[str, ...]:
+    keys: list[str] = []
+    for link in fields.get("issuelinks") or []:
+        rel = link.get("type") or {}
+        inward = str(rel.get("inward") or "").casefold()
+        if "blocked by" not in inward and rel.get("name") != "Blocks":
+            continue
+        issue = link.get("inwardIssue") or {}
+        key = str(issue.get("key") or "")
+        if key and _open_status((issue.get("fields") or {}).get("status")):
+            keys.append(key)
+    return tuple(keys)
+
+
+def _ancestor_labels(fields: Mapping[str, Any]) -> tuple[str, ...]:
+    labels = ((fields.get("parent") or {}).get("fields") or {}).get("labels") or []
+    return tuple(str(label) for label in labels)
+
+
+def _issue_from_node(node: Mapping[str, Any], base: str) -> Issue | None:
+    fields = node.get("fields") or {}
+    key = str(node.get("key") or "")
+    if not key:
+        return None
+    return Issue(
+        key=key,
+        title=str(fields.get("summary") or ""),
+        body=adf.to_text(fields.get("description")),
+        url=f"{base}/browse/{key}",
+        state=str((fields.get("status") or {}).get("name") or ""),
+        labels=tuple(str(label) for label in fields.get("labels") or []),
+        updated_at=fields.get("updated"),
+        closed=((fields.get("status") or {}).get("statusCategory") or {}).get("key") == "done",
+        priority=_priority(fields),
+        estimate=None,
+        created_at=fields.get("created"),
+        open_children=_open_children(fields),
+        open_blockers=_open_blockers(fields),
+        ancestor_labels=_ancestor_labels(fields),
+    )
 
 
 class JiraAdapter(TrackerAdapter):
@@ -106,6 +174,8 @@ class JiraAdapter(TrackerAdapter):
     def _issue_path(key: str, suffix: str = "") -> str:
         return f"/rest/api/3/issue/{urllib.parse.quote(key, safe='')}{suffix}"
 
+
+
     # -- lookups -----------------------------------------------------------------------------
 
     def _myself(self) -> str:
@@ -134,6 +204,9 @@ class JiraAdapter(TrackerAdapter):
     # -- TrackerAdapter ----------------------------------------------------------------------
 
     def fetch_issues(self, filter: Mapping[str, Any]) -> list[Issue]:
+        filter = dict(filter or {})
+        if not filter.get("admit"):
+            filter["admit"] = self._settings.get("admit") or "label"
         jql = build_jql(filter)
         base = self._base_url()
         issues: list[Issue] = []
@@ -144,21 +217,9 @@ class JiraAdapter(TrackerAdapter):
                 body["nextPageToken"] = token
             data = self._request("POST", "/rest/api/3/search/jql", json_body=body).data or {}
             for node in data.get("issues") or []:
-                fields = node.get("fields") or {}
-                key = str(node.get("key") or "")
-                if not key:
-                    continue
-                issues.append(Issue(
-                    key=key,
-                    title=str(fields.get("summary") or ""),
-                    body=adf.to_text(fields.get("description")),
-                    url=f"{base}/browse/{key}",
-                    state=str((fields.get("status") or {}).get("name") or ""),
-                    labels=tuple(str(label) for label in fields.get("labels") or []),
-                    updated_at=fields.get("updated"),
-                    # Jira's "done" category covers Done, Closed, Won't Do and any custom final status.
-                    closed=((fields.get("status") or {}).get("statusCategory") or {}).get("key") == "done",
-                ))
+                issue = _issue_from_node(node, base)
+                if issue is not None:
+                    issues.append(issue)
             token = data.get("nextPageToken")
             if data.get("isLast", True) or not token:
                 return issues

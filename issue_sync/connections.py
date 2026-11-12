@@ -14,7 +14,8 @@ from typing import Any, Mapping
 
 # Settings each connection may override; anything missing falls back to the top-level value.
 SHARED_KEYS = ("state_map", "assignee", "board", "poll_interval_seconds",
-               "api_key_env", "base_url_env", "email_env", "token_env")
+               "api_key_env", "base_url_env", "email_env", "token_env",
+               "admit", "max_active", "order", "leaf_only", "skip_blocked", "exclude_label")
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -76,6 +77,10 @@ def _build(raw: Mapping[str, Any], defaults: Mapping[str, Any], conn_id: str) ->
         settings[key] = str(settings.get(key) or "").strip()
     if not tracker:
         return Connection(conn_id, "", settings, "no tracker set")
+    # ``admit: all`` with no projects would mean the whole workspace; refuse that.
+    admit = str(settings.get("admit") or "label").strip().lower()
+    if admit == "all" and not Connection(conn_id, tracker, settings).projects:
+        return Connection(conn_id, tracker, settings, "admit: all requires at least one project")
     return Connection(conn_id, tracker, settings)
 
 

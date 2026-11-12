@@ -336,3 +336,49 @@ def test_check_names_each_missing_project(secret):
     t = Transport(step("Check", data))
     with pytest.raises(AdapterError, match=r"project 'Nope' not found"):
         adapter(t, filter={"projects": ["Sandbox", "Nope"]}).check()
+
+
+def test_fetch_issues_maps_admission_fields(secret):
+    node = issue_node(1)
+    node.update({
+        "priority": 2, "estimate": 3, "createdAt": "2026-01-01T00:00:00.000Z",
+        "children": {"nodes": [
+            {"identifier": "CORE-9", "state": {"type": "unstarted"}},
+            {"identifier": "CORE-10", "state": {"type": "completed"}},
+        ]},
+        "inverseRelations": {"nodes": [
+            {"type": "blocks", "issue": {"identifier": "CORE-8", "state": {"type": "started"}}},
+            {"type": "related", "issue": {"identifier": "CORE-11", "state": {"type": "unstarted"}}},
+            {"type": "blocks", "issue": {"identifier": "CORE-12", "state": {"type": "canceled"}}},
+        ]},
+        "parent": {
+            "labels": {"nodes": [{"name": "epic"}]},
+            "parent": {
+                "labels": {"nodes": [{"name": "theme"}]},
+                "parent": {"labels": {"nodes": [{"name": "hold"}]}},
+            },
+        },
+    })
+    t = Transport(step("issues(", {"issues": page([node])}))
+    issue = adapter(t).fetch_issues({})[0]
+    assert issue.priority == 2 and issue.estimate == 3
+    assert issue.created_at == "2026-01-01T00:00:00.000Z"
+    assert issue.open_children == ("CORE-9",)
+    assert issue.open_blockers == ("CORE-8",)
+    assert issue.ancestor_labels == ("epic", "theme", "hold")
+
+
+def test_fetch_issues_admit_all_drops_label_filter(secret):
+    t = Transport(step("issues(", {"issues": page([])}, expect={"filter": {
+        "project": {"name": {"eq": "Sandbox"}}}}))
+    assert adapter(t, admit="all").fetch_issues({"project": "Sandbox", "label": "agent"}) == []
+    t.done()
+
+
+def test_fetch_issues_query_asks_for_admission_fields(secret):
+    t = Transport(step("issues(", {"issues": page([])}))
+    adapter(t).fetch_issues({})
+    query = t.requests[0]["query"]
+    assert "priority" in query and "estimate" in query and "createdAt" in query
+    assert "children" in query and "inverseRelations" in query
+    assert t.requests[0]["variables"]["first"] == 25

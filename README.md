@@ -134,6 +134,32 @@ Common settings (all trackers):
 
 Statuses left out of `state_map` are not pushed to the tracker.
 
+## Choosing which issues become cards
+
+Inbound still starts from the connection's tracker filter (projects + label). These
+optional keys then decide which of those issues become cards. Set them on a connection
+or at the top level as the default for every connection.
+
+| key | values | default | meaning |
+|-----|--------|---------|---------|
+| `admit` | `label` or `all` | `label` | `label` keeps the label filter. `all` admits every open issue in the connection's projects (no label needed). `all` with no projects is a configuration error; it never means the whole workspace. |
+| `max_active` | integer ≥ 1 | unlimited | Cap on this connection's cards in `todo`, `ready`, `running`, `review` or `scheduled`. `blocked`, `triage`, `done` and `archived` do not count. Each pass admits at most `max_active - active` new cards. |
+| `order` | `priority` or `created` | `priority` | `priority` sorts Urgent (1) … Low (4), then no priority last; ties break by smaller estimate, then oldest created. `created` sorts oldest first. |
+| `leaf_only` | bool | false | Skip issues that have any still-open child or sub-issue. |
+| `skip_blocked` | bool | **true** | Skip issues blocked by another issue that is still open. |
+| `exclude_label` | string | unset | Never admit an issue with this label (case-insensitive), or whose parent / grandparent / great-grandparent carries it. |
+
+When a key is omitted, behaviour is unchanged except `skip_blocked`, which defaults to on.
+
+```yaml
+        admit: label
+        max_active: 8
+        order: priority
+        leaf_only: true
+        skip_blocked: true
+        exclude_label: hold
+```
+
 ## Commands
 
 - `/issues status`: each connection's tracker, projects, board, last poll, backoff and errors.

@@ -13,7 +13,7 @@ import threading
 import time
 from typing import Any, Callable, Iterable, Mapping
 
-from .adapters.base import RateLimited, TrackerAdapter
+from .adapters.base import Issue, RateLimited, TrackerAdapter
 from .signature import sign, strip_signature
 from .links import (Link, asked_note, card_body, card_title, done_note, has_done_note, has_note,
                     idempotency_key, link_from_card)
@@ -25,6 +25,8 @@ DEFAULT_POLL_INTERVAL = 60.0
 MIN_BACKOFF = 1.0
 # Kanban statuses a user may map to tracker states via ``state_map``.
 MAPPABLE_STATUSES = frozenset({"ready", "running", "blocked", "review", "done"})
+# Cards in these statuses count toward ``max_active``.
+ACTIVE_STATUSES = frozenset({"todo", "ready", "running", "review", "scheduled"})
 
 
 def _poll_interval(value: Any) -> float:
@@ -55,6 +57,44 @@ def _error_text(exc: BaseException) -> str:
     return str(exc) or type(exc).__name__
 
 
+def _admit(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in ("label", "all") else "label"
+
+
+def _max_active(value: Any) -> int | None:
+    if isinstance(value, bool) or value in (None, ""):
+        return None
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n >= 1 else None
+
+
+def _order(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in ("priority", "created") else "priority"
+
+
+def _as_bool(value: Any, default: bool) -> bool:
+    if value in (None, ""):
+        return default
+    if isinstance(value, str):
+        return value.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(value)
+
+
+def _issue_sort_key(issue: Issue, order: str) -> tuple:
+    created = issue.created_at or "\uffff"
+    if order == "created":
+        return (created,)
+    # Urgent(1)..Low(4), then no priority (0) last; smaller estimate, then oldest created.
+    rank = issue.priority if issue.priority else 10**9
+    estimate = issue.estimate if issue.estimate is not None else float("inf")
+    return (rank, estimate, created)
+
+
 class SyncEngine:
     def __init__(self, adapter: TrackerAdapter, kanban: Any, state: SyncState,
                  settings: Mapping[str, Any] | None, clock: Callable[[], float] = time.time,
@@ -74,6 +114,15 @@ class SyncEngine:
         assignee = settings.get("assignee")
         self.assignee: str | None = (assignee.strip() or None) if isinstance(assignee, str) else None
         self.poll_interval = _poll_interval(settings.get("poll_interval_seconds", DEFAULT_POLL_INTERVAL))
+        self.admit = _admit(settings.get("admit"))
+        self.max_active = _max_active(settings.get("max_active"))
+        self.order = _order(settings.get("order"))
+        self.leaf_only = _as_bool(settings.get("leaf_only"), False)
+        self.skip_blocked = _as_bool(settings.get("skip_blocked"), True)
+        exclude = settings.get("exclude_label")
+        self.exclude_label = exclude.strip() if isinstance(exclude, str) else ""
+        # Why the last inbound pass skipped each issue key (for a later dry-run command).
+        self.last_skips: dict[str, str] = {}
         # Cards of this connection seen by the last full pass; the sync pane reads them.
         self.last_cards: list[dict[str, Any]] = []
         # Hooks and the dispatcher tick may race; a busy engine skips rather than queueing work.
@@ -165,13 +214,40 @@ class SyncEngine:
 
     def _poll_inbound(self, cards: Iterable[Mapping[str, Any]]) -> int:
         tracker = self.adapter.name
+        cards = list(cards)
         linked = {link.key for link in map(link_from_card, cards) if self.owns(link)}
-        created = 0
+        active = sum(
+            1 for card in cards
+            if self.owns(link_from_card(card))
+            and str(card.get("status") or "").casefold() in ACTIVE_STATUSES
+        )
+        skips: dict[str, str] = {}
+        candidates: list[Issue] = []
         for issue in self.adapter.fetch_issues(self.filter):
-            link = Link(tracker, issue.key, issue.url, self.conn)
-            # A finished issue never needs a worker; a card would only invite one to redo it.
-            if issue.key in linked or issue.closed:
+            if issue.closed:
+                skips[issue.key] = "closed"
                 continue
+            if issue.key in linked:
+                skips[issue.key] = "linked"
+                continue
+            if self._excluded(issue):
+                skips[issue.key] = "excluded"
+                continue
+            if self.leaf_only and issue.open_children:
+                skips[issue.key] = "parent"
+                continue
+            if self.skip_blocked and issue.open_blockers:
+                skips[issue.key] = "blocked"
+                continue
+            candidates.append(issue)
+        candidates.sort(key=lambda issue: _issue_sort_key(issue, self.order))
+        remaining = None if self.max_active is None else max(0, self.max_active - active)
+        created = 0
+        for issue in candidates:
+            if remaining is not None and created >= remaining:
+                skips[issue.key] = "cap"
+                continue
+            link = Link(tracker, issue.key, issue.url, self.conn)
             try:
                 card_id = self.kanban.create_card(
                     card_title(issue.key, issue.title),
@@ -180,6 +256,7 @@ class SyncEngine:
                     assignee=self.assignee,
                 )
             except RateLimited:
+                self.last_skips = skips
                 raise
             except Exception as exc:
                 self.state.update_link(link.id, last_error=_error_text(exc))
@@ -188,7 +265,14 @@ class SyncEngine:
             self.state.update_link(link.id, card_id=card_id, last_pushed_state=issue.state, last_error=None)
             linked.add(issue.key)
             created += 1
+        self.last_skips = skips
         return created
+
+    def _excluded(self, issue: Issue) -> bool:
+        needle = self.exclude_label.casefold()
+        if not needle:
+            return False
+        return any(str(name).casefold() == needle for name in (*issue.labels, *issue.ancestor_labels))
 
     # ── outbound: card status -> tracker state ────────────────────────────
 

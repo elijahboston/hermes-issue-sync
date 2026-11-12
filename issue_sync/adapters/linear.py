@@ -22,6 +22,7 @@ API_URL = "https://api.linear.app/graphql"
 DEFAULT_KEY_ENV = "LINEAR_API_KEY"
 DEFAULT_LABEL = "agent"
 PAGE_SIZE = 50
+ISSUES_PAGE_SIZE = 25  # nested children/relations make Issues too complex at PAGE_SIZE
 CLOSED_STATE_TYPES = frozenset({"completed", "canceled"})
 
 ISSUES_QUERY = """
@@ -29,8 +30,18 @@ query Issues($filter: IssueFilter!, $first: Int!, $after: String) {
   issues(filter: $filter, first: $first, after: $after) {
     nodes {
       identifier title description url updatedAt
+      priority estimate createdAt
       state { name type }
-      labels(first: 100) { nodes { name } }
+      labels(first: 50) { nodes { name } }
+      children(first: 50) { nodes { identifier state { type } } }
+      inverseRelations(first: 50) { nodes { type issue { identifier state { type } } } }
+      parent {
+        labels(first: 50) { nodes { name } }
+        parent {
+          labels(first: 50) { nodes { name } }
+          parent { labels(first: 50) { nodes { name } } }
+        }
+      }
     }
     pageInfo { hasNextPage endCursor }
   }
@@ -109,6 +120,75 @@ def _nodes(connection: Any) -> list[dict[str, Any]]:
     return list((connection or {}).get("nodes") or [])
 
 
+def _is_open(state: Mapping[str, Any] | None) -> bool:
+    return (state or {}).get("type") not in CLOSED_STATE_TYPES
+
+
+def _priority(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _estimate(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _open_children(node: Mapping[str, Any]) -> tuple[str, ...]:
+    return tuple(
+        child["identifier"] for child in _nodes(node.get("children"))
+        if child.get("identifier") and _is_open(child.get("state"))
+    )
+
+
+def _open_blockers(node: Mapping[str, Any]) -> tuple[str, ...]:
+    keys: list[str] = []
+    for rel in _nodes(node.get("inverseRelations")):
+        if (rel.get("type") or "") != "blocks":
+            continue
+        issue = rel.get("issue") or {}
+        ident = issue.get("identifier")
+        if ident and _is_open(issue.get("state")):
+            keys.append(ident)
+    return tuple(keys)
+
+
+def _ancestor_labels(node: Mapping[str, Any]) -> tuple[str, ...]:
+    names: list[str] = []
+    parent = node.get("parent")
+    for _ in range(3):
+        if not parent:
+            break
+        names.extend(label["name"] for label in _nodes(parent.get("labels")) if label.get("name"))
+        parent = parent.get("parent")
+    return tuple(names)
+
+
+def _issue_from_node(node: Mapping[str, Any]) -> Issue:
+    return Issue(
+        key=node["identifier"],
+        title=node.get("title") or "",
+        body=node.get("description") or "",
+        url=node.get("url") or "",
+        state=(node.get("state") or {}).get("name") or "",
+        labels=tuple(label["name"] for label in _nodes(node.get("labels")) if label.get("name")),
+        updated_at=node.get("updatedAt"),
+        closed=(node.get("state") or {}).get("type") in CLOSED_STATE_TYPES,
+        priority=_priority(node.get("priority")),
+        estimate=_estimate(node.get("estimate")),
+        created_at=node.get("createdAt"),
+        open_children=_open_children(node),
+        open_blockers=_open_blockers(node),
+        ancestor_labels=_ancestor_labels(node),
+    )
+
+
 class LinearAdapter(TrackerAdapter):
     def __init__(self, settings: Mapping[str, Any], *, transport: Transport | None = None,
                  clock: Callable[[], float] = time.time) -> None:
@@ -147,11 +227,12 @@ class LinearAdapter(TrackerAdapter):
         return data
 
     def _paginate(self, query: str, variables: Mapping[str, Any],
-                  connection: Callable[[dict[str, Any]], Any]) -> list[dict[str, Any]]:
+                  connection: Callable[[dict[str, Any]], Any], *, first: int | None = None) -> list[dict[str, Any]]:
         nodes: list[dict[str, Any]] = []
         after: str | None = None
+        page_size = first if first is not None else PAGE_SIZE
         while True:
-            page = connection(self._graphql(query, {**variables, "first": PAGE_SIZE, "after": after})) or {}
+            page = connection(self._graphql(query, {**variables, "first": page_size, "after": after})) or {}
             nodes.extend(_nodes(page))
             info = page.get("pageInfo") or {}
             after = info.get("endCursor")
@@ -193,27 +274,19 @@ class LinearAdapter(TrackerAdapter):
 
     def fetch_issues(self, filter: Mapping[str, Any]) -> list[Issue]:
         filter = filter or {}
-        issue_filter: dict[str, Any] = {
-            "labels": {"some": {"name": {"eqIgnoreCase": str(filter.get("label") or DEFAULT_LABEL)}}}}
+        issue_filter: dict[str, Any] = {}
+        admit = str(filter.get("admit") or self._settings.get("admit") or "label").strip().lower()
+        if admit != "all":
+            issue_filter["labels"] = {
+                "some": {"name": {"eqIgnoreCase": str(filter.get("label") or DEFAULT_LABEL)}}}
         projects = filter_projects(filter)
         if projects:
             issue_filter["project"] = _project_filter(projects)
         if filter.get("team"):
             issue_filter["team"] = {"key": {"eq": str(filter["team"])}}
-        nodes = self._paginate(ISSUES_QUERY, {"filter": issue_filter}, lambda data: data.get("issues"))
-        return [
-            Issue(
-                key=node["identifier"],
-                title=node.get("title") or "",
-                body=node.get("description") or "",
-                url=node.get("url") or "",
-                state=(node.get("state") or {}).get("name") or "",
-                labels=tuple(label["name"] for label in _nodes(node.get("labels")) if label.get("name")),
-                updated_at=node.get("updatedAt"),
-                closed=(node.get("state") or {}).get("type") in CLOSED_STATE_TYPES,
-            )
-            for node in nodes
-        ]
+        nodes = self._paginate(ISSUES_QUERY, {"filter": issue_filter}, lambda data: data.get("issues"),
+                               first=ISSUES_PAGE_SIZE)
+        return [_issue_from_node(node) for node in nodes]
 
     def move_issue(self, key: str, target_state: str) -> None:
         issue = self._issue_ref(key)

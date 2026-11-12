@@ -1,7 +1,6 @@
 """In-memory tracker for tests and local demos (``tracker: fake``). Records every call."""
 
-from __future__ import annotations
-
+from dataclasses import replace
 from typing import Any, Iterable, Mapping
 
 from ..signature import is_signed
@@ -35,9 +34,17 @@ class FakeAdapter(TrackerAdapter):
 
     def add_issue(self, key: str, title: str = "", *, body: str = "", state: str = "Todo",
                   url: str | None = None, labels: Iterable[str] = (), updated_at: str | None = None,
-                  closed: bool = False) -> Issue:
-        issue = Issue(key=key, title=title or key, body=body, url=url if url is not None else f"https://fake.invalid/{key}",
-                      state=state, labels=tuple(labels), updated_at=updated_at, closed=closed)
+                  closed: bool = False, priority: int = 0, estimate: float | None = None,
+                  created_at: str | None = None, open_children: Iterable[str] = (),
+                  open_blockers: Iterable[str] = (), ancestor_labels: Iterable[str] = ()) -> Issue:
+        issue = Issue(
+            key=key, title=title or key, body=body,
+            url=url if url is not None else f"https://fake.invalid/{key}",
+            state=state, labels=tuple(labels), updated_at=updated_at, closed=closed,
+            priority=priority, estimate=estimate, created_at=created_at,
+            open_children=tuple(open_children), open_blockers=tuple(open_blockers),
+            ancestor_labels=tuple(ancestor_labels),
+        )
         self.issues[key] = issue
         return issue
 
@@ -77,8 +84,7 @@ class FakeAdapter(TrackerAdapter):
         issue = self._issue(key)
         if self.allowed_states is not None and target_state not in self.allowed_states:
             raise TransitionNotAllowed(f"{self._name}: {key} cannot move to {target_state!r}")
-        self.issues[key] = Issue(issue.key, issue.title, issue.body, issue.url, target_state,
-                                 issue.labels, issue.updated_at)
+        self.issues[key] = replace(issue, state=target_state)
 
     def post_comment(self, key: str, body: str) -> Comment:
         self.calls.append(("post_comment", key, body))

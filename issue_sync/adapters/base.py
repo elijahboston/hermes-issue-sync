@@ -17,6 +17,12 @@ class Issue:
     labels: tuple[str, ...] = ()
     updated_at: str | None = None  # ISO-8601, as reported by the tracker
     closed: bool = False  # finished or canceled, by the tracker's status type (not its name)
+    priority: int = 0  # 1=Urgent .. 4=Low; 0=none
+    estimate: float | None = None
+    created_at: str | None = None  # ISO-8601
+    open_children: tuple[str, ...] = ()
+    open_blockers: tuple[str, ...] = ()
+    ancestor_labels: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
