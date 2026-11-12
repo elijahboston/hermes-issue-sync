@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -182,6 +183,18 @@ def _land_failure_body(tail: str) -> str:
             + "Reply here when it's fixed and Hermes will try again.")
 
 
+def _retry_patterns(value: Any) -> list[tuple[str, re.Pattern[str]]]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    out: list[tuple[str, re.Pattern[str]]] = []
+    for item in value:
+        text = str(item)
+        try:
+            out.append((text, re.compile(text, re.IGNORECASE)))
+        except re.error:
+            logger.warning("issue-sync: retry_on pattern %r is not a valid regex; ignoring it", text)
+    return out
+
 def _prepared_card_body(tracker: str, key: str, url: str, conn: str, body: str) -> str:
     """Marker on line 1, then a blank line, then the hook body (a leading marker stripped)."""
     marker = build_marker(tracker, key, url, conn)
@@ -235,6 +248,7 @@ class SyncEngine:
         self.land_retry = _seconds(settings.get("land_retry_seconds"), DEFAULT_LAND_RETRY,
                                   "land_retry_seconds")
         self.merged_base = str(settings.get("merged_base") or "").strip()
+        self.retry_on = _retry_patterns(settings.get("retry_on"))
         self._land_launcher = land_launcher
         self._git_runner = git_runner
         self._land_dir = Path(land_dir) if land_dir is not None else None
@@ -815,6 +829,8 @@ class SyncEngine:
                 return 0  # answered; waiting for the unblock to show up on the board
             note = asked_note(link, block_id)
             if entry.get("asked_block") != block_id and not has_note(show.get("comments"), note):
+                if self._maybe_auto_retry(link, card_id, reason):
+                    return 0
                 return self._ask(link, card_id, block_id, reason, entry.get("comment_cursor"), note)
             if entry.get("asked_block") != block_id:
                 # Asked by another process (worker hook); adopt its question without a cursor reset.
@@ -826,6 +842,20 @@ class SyncEngine:
             self.state.update_link(link.id, last_error=_error_text(exc))
             logger.warning("issue-sync: blocking sync failed for %s: %s", link.id, _error_text(exc))
             return 0
+
+    def _maybe_auto_retry(self, link: Link, card_id: Any, reason: str) -> bool:
+        """Unblock once when the block reason matches ``retry_on``. Posts nothing on the issue."""
+        if not self.retry_on or self.state.link(link.id).get("auto_retried"):
+            return False
+        for original, compiled in self.retry_on:
+            if compiled.search(reason or ""):
+                self.kanban.unblock(
+                    card_id, f"issue-sync: automatic retry (block reason matched {original})",
+                )
+                self.state.update_link(link.id, auto_retried=True, last_error=None)
+                return True
+        return False
+
 
     def _ask(self, link: Link, card_id: Any, block_id: str, reason: str, cursor: str | None, note: str) -> int:
         question = reason or "(no reason given)"

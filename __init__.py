@@ -58,6 +58,7 @@ _DEFAULTS: dict[str, Any] = {
     "land_timeout_seconds": 1800,
     "land_retry_seconds": 300,
     "merged_base": "",
+    "retry_on": [],
 }
 
 _logged: set[str] = set()
@@ -90,6 +91,9 @@ def _read_settings(ctx: Any) -> dict[str, Any]:
     if not isinstance(settings["connections"], list):
         _log_once(logging.WARNING, "issue-sync: setting 'connections' must be a list; ignoring it")
         settings["connections"] = []
+    if not isinstance(settings["retry_on"], list):
+        _log_once(logging.WARNING, "issue-sync: setting 'retry_on' must be a list; ignoring it")
+        settings["retry_on"] = []
     return settings
 
 

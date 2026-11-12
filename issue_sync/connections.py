@@ -18,7 +18,7 @@ SHARED_KEYS = ("state_map", "assignee", "board", "poll_interval_seconds",
                "admit", "max_active", "order", "leaf_only", "skip_blocked", "exclude_label",
                "prepare_command", "prepare_timeout_seconds",
                "done_gate", "land_command", "land_timeout_seconds", "land_retry_seconds",
-               "merged_base")
+               "merged_base", "retry_on")
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -76,13 +76,25 @@ def _done_gate(value: Any) -> str:
     text = str(value or "").strip().lower()
     return text if text in ("immediate", "merged", "command") else "immediate"
 
-
 def _has_land_command(value: Any) -> bool:
     if isinstance(value, str):
         return bool(value.strip())
     if isinstance(value, (list, tuple)):
         return any(str(part).strip() for part in value)
     return False
+
+
+def _retry_on_error(value: Any) -> str | None:
+    if value in (None, "", []):
+        return None
+    if not isinstance(value, (list, tuple)):
+        return "retry_on must be a list of regex strings"
+    for pat in value:
+        try:
+            re.compile(str(pat), re.IGNORECASE)
+        except re.error:
+            return f"retry_on: invalid regex {pat!r}"
+    return None
 
 
 def _build(raw: Mapping[str, Any], defaults: Mapping[str, Any], conn_id: str) -> Connection:
@@ -104,6 +116,9 @@ def _build(raw: Mapping[str, Any], defaults: Mapping[str, Any], conn_id: str) ->
         return Connection(conn_id, tracker, settings, "done_gate: command requires land_command")
     if gate == "merged" and not settings["merged_base"]:
         return Connection(conn_id, tracker, settings, "done_gate: merged requires merged_base")
+    retry_error = _retry_on_error(settings.get("retry_on"))
+    if retry_error:
+        return Connection(conn_id, tracker, settings, retry_error)
     return Connection(conn_id, tracker, settings)
 
 

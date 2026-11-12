@@ -168,3 +168,11 @@ config_schema:
       Branch the card branch must reach when done_gate is "merged", e.g. "main". Required in
       merged mode. Checked with git fetch + merge-base --is-ancestor, and (if gh is on PATH)
       gh pr view for squash merges.
+  retry_on:
+    type: list
+    default: []
+    description: >-
+      Case-insensitive regexes. When a card blocks with a reason matching any pattern, and this
+      card has not been auto-retried yet, the plugin unblocks it once (no comment on the issue).
+      A later matching block on the same card asks the question as usual. An invalid regex is a
+      connection error. Empty means never auto-retry.
