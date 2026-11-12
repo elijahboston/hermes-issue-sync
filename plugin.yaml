@@ -127,7 +127,7 @@ config_schema:
       Command run once before each card is created. A string is split with shlex (no shell);
       a list of strings is used as argv. ~ in the first element is expanded. Issue data is
       JSON on stdin, never interpolated into the command. Empty means no hook. Owner-only:
-      set in config.yaml; nothing in this plugin writes this setting.
+      set in config.yaml, or by `hermes issues setup --prepare`.
   prepare_timeout_seconds:
     type: int
     default: 120
@@ -149,8 +149,7 @@ config_schema:
     description: >-
       Owner-set command run when done_gate is "command". A string is split with shlex (no
       shell); a list of strings is argv. ~ in the first element is expanded. Required when
-      done_gate is command. Owner-only: set in config.yaml; nothing in this plugin writes
-      this setting.
+      done_gate is command. Owner-only: set in config.yaml, or by `hermes issues setup --landing`.
   land_timeout_seconds:
     type: int
     default: 1800

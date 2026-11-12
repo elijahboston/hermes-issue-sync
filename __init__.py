@@ -291,6 +291,7 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
             return f"issue-sync: status unavailable ({type(exc).__name__}: {exc})"
 
     def _setup_issues_cli(subparser: Any) -> None:
+        from .issue_sync.setup import add_parser as add_setup_parser
         subs = subparser.add_subparsers(dest="issues_command", required=True)
         dry = subs.add_parser(
             "dry-run",
@@ -303,6 +304,7 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
         )
         dry.add_argument("--json", action="store_true", dest="as_json",
                          help="Print one JSON object")
+        add_setup_parser(subs)
 
     def _cli_handler(args: Any) -> int:
         cmd = getattr(args, "issues_command", None)
@@ -319,6 +321,9 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
                 return 1
             print(text)
             return code
+        if cmd == "setup":
+            from .issue_sync.setup import run_setup
+            return run_setup(args)
         print(f"unknown issues subcommand {cmd!r}", file=sys.stderr)
         return 1
 
@@ -330,7 +335,7 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
     )
     ctx.register_cli_command(
         name="issues",
-        help="Issue tracker sync: dry-run admission and landing",
+        help="Issue tracker sync: dry-run and setup",
         setup_fn=_setup_issues_cli,
         handler_fn=_cli_handler,
     )

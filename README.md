@@ -51,6 +51,51 @@ Jira, so a label-only filter pulls in every labelled issue from unrelated projec
 
 ## Configuration
 
+### Setting up a connection
+
+The fastest way to add a tracker is `hermes issues setup`. It writes one connection
+into the active profile's `config.yaml` and, if you choose a landing or prepare
+style, starter scripts under the plugin data dir (`hooks/<id>/`). It never asks
+for secret *values* — only the env-var names that hold them.
+
+Interactive (defaults in brackets):
+
+```sh
+hermes issues setup
+```
+
+Scripted:
+
+```sh
+hermes issues setup --yes --id lin --tracker linear \
+  --project "Ticket Sync Sandbox" --board my-board --assignee worker \
+  --landing merge-to-main --base-branch main --prepare worktree \
+  --repo /path/to/checkout
+```
+
+`--yes` never guesses a required value (`--id`, `--tracker`; `--project` when
+`--admit all`; `--repo` when `--prepare worktree`). Replacing an existing `id`
+or overwriting scripts requires `--force`. `--print-only` prints the YAML block
+and writes nothing.
+
+Then inspect what the next pass would do (read-only: no cards, no comments, no
+land command):
+
+```sh
+hermes issues dry-run --connection lin
+hermes issues dry-run --json
+```
+
+Files `setup` may create:
+
+| path | when |
+|------|------|
+| `~/.hermes/config.yaml` (the active profile) | always, unless `--print-only` |
+| `<plugin-data>/hooks/<id>/land.sh` | `--landing merge-to-main`, `pr-automerge`, or `custom` |
+| `<plugin-data>/hooks/<id>/prepare.sh` | `--prepare worktree` or `custom` |
+
+You can still edit `config.yaml` by hand, as below.
+
 In `~/.hermes/config.yaml`. Several trackers or projects at once use `connections`:
 
 ```yaml
@@ -230,8 +275,9 @@ Make the script **safe to run twice** for the same issue. It runs again on the n
 anything after it fails (for example `kanban create`), so reuse an existing worktree or branch
 instead of failing on it.
 
-`prepare_command` is read only from the owner's plugin settings (`config.yaml`). This plugin
-does not expose a tool, command, or API route that sets it.
+`prepare_command` is owner-only, in `config.yaml`. `hermes issues setup --prepare`
+writes a starter script and this setting; nothing else in the plugin sets it.
+
 
 
 ## When is an issue Done? (done gate)
@@ -289,8 +335,9 @@ gateway restart does not kill a detached land process; the next pass reads the r
 under the plugin data folder (`land/<connection>/<card_id>-<attempt>.json`).
 
 `land_command` is required when `done_gate` is `command` (a connection error if missing).
-It is owner-only: set in `config.yaml`. This plugin does not expose a tool, command, or API
-route that sets it.
+It is owner-only, in `config.yaml`. `hermes issues setup --landing` writes a starter
+`land.sh` and this setting; nothing else in the plugin sets it.
+
 
 Example land script:
 
@@ -383,6 +430,7 @@ Unset means never auto-retry. An invalid regex is a connection error.
 - `/issues dry-run`: what the next inbound pass would admit and what the done gate
   would do next, without creating, moving, or commenting. Same report as
   `hermes issues dry-run` (`--connection`, `--json`; `--with-prepare` is CLI-only).
+- `hermes issues setup`: write a connection and optional starter scripts (CLI only).
 
 In Desktop, the status-bar chip also toggles the panel. Closing the panel keeps sync running.
 
@@ -424,11 +472,17 @@ Upstream report: https://github.com/NousResearch/hermes-agent/issues/151126
   command is also run (no shell, issue text on stdin only). If `land_command` is set, that
   owner-set command is started detached (no shell). In `merged` mode it may run
   `git fetch` / `git merge-base --is-ancestor` and, if `gh` is on `PATH`, `gh pr view` in
-  the card's worktree. No other commands.
+  the card's worktree. `hermes issues setup` may generate `git`/`gh` starter scripts; they
+  run only when configured as `prepare_command` / `land_command`. `hermes issues dry-run`
+  is read-only (board list + tracker fetch/`check`; `prepare_command` only with
+  `--with-prepare`). No other commands.
 - **Files:** writes plugin state through `ctx.state`, land result/summary files under
   `land/` in its data folder, and a status snapshot `pane.json` in
   `<hermes home>/plugin-data/hermes-issue-sync/`, which the Desktop panel reads through the
-  plugin's own API route. Nothing outside its data folder.
+  plugin's own API route. `hermes issues setup` merges one connection into the active
+  profile's `config.yaml` and may write `hooks/<id>/*.sh` under the plugin data dir
+  (never overwrites an existing script unless `--force`). Dry-run writes nothing.
+
 - **Desktop:** the panel, chip and card badges use only the Desktop plugin SDK.
 
 ## Development
