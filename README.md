@@ -160,6 +160,66 @@ When a key is omitted, behaviour is unchanged except `skip_blocked`, which defau
         exclude_label: hold
 ```
 
+## Card templates, worktrees and models
+
+Optional per-connection keys (or top-level defaults) that shape the kanban card, not which
+issues are admitted. When they are absent, cards are created exactly as they are today.
+
+- `card_template`: path (`~` expanded) to a text file. Rendered with `str.format_map`; unknown
+  `{placeholders}` are left intact. Placeholders: `{key} {title} {url} {body} {base} {base_sha}
+  {worktree} {branch}` (the last four are empty for scratch workspaces). The result is the card
+  body **after** the marker line — the marker is always first, so `link_from_card` still works.
+  A missing or unreadable file is a per-issue error, not a crash.
+- `workspace`: `{mode: scratch}` (default, no flags) or `{mode: worktree, repo, base, root,
+  branch_prefix}`. `base` may be a glob such as `release/*`: the plugin fetches `origin`, lists
+  matching `refs/remotes/origin/…`, and picks the newest by version-aware sort of the part after
+  the prefix (falling back to committer date). `root` defaults to `<repo>.worktrees` beside the
+  repo, not inside it. The worktree is `<root>/<slug>` on branch `<branch_prefix><slug>`, created
+  with `git worktree add` before the card (reused if the directory already exists) and passed as
+  `--workspace worktree:<path> --branch <branch>`.
+- `skills`: list of skill names, each passed as `--skill`.
+- `model_rules`: evaluated top to bottom, first match wins. Each rule is
+  `{when: {label: name} | {estimate_max: n} | {estimate_min: n} | {}, model: id, provider: name}`
+  or uses `role` instead of `model` to resolve through `roles_file`. A match passes `--model`
+  (and `--provider` when given); no match passes nothing.
+- `roles_file`: YAML shaped `roles: {role: model-key}` and `models: {model-key: {provider: id}}`.
+  A role rule resolves `models[roles[role]][provider]`. Unreadable file or unknown role: no model
+  flags and a log warning, never a crash.
+- `reviewer`: profile name stored on the engine for later landing work; not passed to kanban yet.
+
+```yaml
+plugins:
+  entries:
+    hermes-issue-sync:
+      settings:
+        board: my-board
+        connections:
+          - id: lin
+            tracker: linear
+            projects: [Sandbox]
+            label: agent
+            card_template: ~/agent/card.md
+            workspace:
+              mode: worktree
+              repo: ~/src/app
+              base: release/*
+              # root defaults to ~/src/app.worktrees
+              branch_prefix: wt/
+            skills: [repo, kanban]
+            roles_file: ~/agent/roles.yaml
+            model_rules:
+              - when: {label: hard}
+                role: strong
+                provider: anthropic
+              - when: {estimate_max: 2}
+                model: gpt-4.1-mini
+                provider: openai
+              - when: {}
+                model: gpt-4.1
+                provider: openai
+            reviewer: reviewer
+```
+
 ## Commands
 
 - `/issues status`: each connection's tracker, projects, board, last poll, backoff and errors.
@@ -199,10 +259,12 @@ Upstream report: https://github.com/NousResearch/hermes-agent/issues/151126
 - **Background work:** on each kanban dispatcher tick it runs one sync pass per connection in
   a short-lived background thread, at most every `poll_interval_seconds`.
 - **Shell commands:** it runs `hermes kanban …` (list, show, create, comment, unblock) as a
-  subprocess to read and update the board. No other commands.
+  subprocess to read and update the board. When a connection uses a worktree workspace it also
+  runs `git` in that connection's repo (`fetch`, `for-each-ref` / `rev-parse`, `worktree add`).
 - **Files:** writes plugin state through `ctx.state` and a status snapshot
   `pane.json` in its own data folder (`<hermes home>/plugin-data/hermes-issue-sync/`), which
-  the Desktop panel reads through the plugin's own API route. Nothing outside its data folder.
+  the Desktop panel reads through the plugin's own API route. Worktree mode also creates git
+  worktrees under the configured workspace root (default `<repo>.worktrees` beside the repo).
 - **Desktop:** the panel, chip and card badges use only the Desktop plugin SDK.
 
 ## Development

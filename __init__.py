@@ -51,6 +51,12 @@ _DEFAULTS: dict[str, Any] = {
     "leaf_only": False,
     "skip_blocked": True,
     "exclude_label": "",
+    "card_template": "",
+    "workspace": {},
+    "skills": [],
+    "model_rules": [],
+    "roles_file": "",
+    "reviewer": "",
 }
 
 _logged: set[str] = set()
@@ -70,19 +76,20 @@ def _read_settings(ctx: Any) -> dict[str, Any]:
         value = ctx.get_config(key, default=default)
         settings[key] = default if value is None else value
     for key in ("tracker", "assignee", "board", "api_key_env", "base_url_env", "email_env", "token_env",
-                "admit", "order", "exclude_label"):
+                "admit", "order", "exclude_label", "card_template", "roles_file", "reviewer"):
         settings[key] = str(settings[key]).strip()
     # A credential name saved blank (e.g. a cleared settings field) means "use the default name".
     for key in ("api_key_env", "base_url_env", "email_env", "token_env"):
         settings[key] = settings[key] or _DEFAULTS[key]
-    for key in ("filter", "state_map"):
+    for key in ("filter", "state_map", "workspace"):
         if not isinstance(settings[key], Mapping):
             _log_once(logging.WARNING, "issue-sync: setting %r must be a mapping; ignoring it", key)
             settings[key] = {}
         settings[key] = dict(settings[key])
-    if not isinstance(settings["connections"], list):
-        _log_once(logging.WARNING, "issue-sync: setting 'connections' must be a list; ignoring it")
-        settings["connections"] = []
+    for key in ("connections", "skills", "model_rules"):
+        if not isinstance(settings[key], list):
+            _log_once(logging.WARNING, "issue-sync: setting %r must be a list; ignoring it", key)
+            settings[key] = []
     return settings
 
 

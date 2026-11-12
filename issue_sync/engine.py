@@ -11,13 +11,16 @@ import logging
 import math
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from .adapters.base import Issue, RateLimited, TrackerAdapter
 from .signature import sign, strip_signature
-from .links import (Link, asked_note, card_body, card_title, done_note, has_done_note, has_note,
-                    idempotency_key, link_from_card)
+from .links import (Link, asked_note, card_body, card_body_from_template, card_title, done_note,
+                    has_done_note, has_note, idempotency_key, link_from_card, render_card_template)
+from .models import match_model
 from .state import SyncState
+from .workspace import Git, ensure_worktree, parse_workspace
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +101,7 @@ def _issue_sort_key(issue: Issue, order: str) -> tuple:
 class SyncEngine:
     def __init__(self, adapter: TrackerAdapter, kanban: Any, state: SyncState,
                  settings: Mapping[str, Any] | None, clock: Callable[[], float] = time.time,
-                 *, conn: str = "", owns_legacy: bool = False) -> None:
+                 *, conn: str = "", owns_legacy: bool = False, git: Callable | None = None) -> None:
         settings = settings if isinstance(settings, Mapping) else {}
         self.adapter = adapter
         # Connection id written into new card markers; "" for the single-tracker setup.
@@ -121,6 +124,20 @@ class SyncEngine:
         self.skip_blocked = _as_bool(settings.get("skip_blocked"), True)
         exclude = settings.get("exclude_label")
         self.exclude_label = exclude.strip() if isinstance(exclude, str) else ""
+        tmpl = settings.get("card_template")
+        self.card_template = tmpl.strip() if isinstance(tmpl, str) and tmpl.strip() else None
+        self.workspace = parse_workspace(settings.get("workspace"))
+        skills = settings.get("skills")
+        if isinstance(skills, str):
+            skills = [skills]
+        self.skills = tuple(str(s).strip() for s in skills if str(s).strip()) if isinstance(skills, (list, tuple)) else ()
+        rules = settings.get("model_rules")
+        self.model_rules = list(rules) if isinstance(rules, list) else []
+        roles = settings.get("roles_file")
+        self.roles_file = roles.strip() if isinstance(roles, str) and roles.strip() else None
+        reviewer = settings.get("reviewer")
+        self.reviewer = reviewer.strip() if isinstance(reviewer, str) and reviewer.strip() else None
+        self.git = git or Git()
         # Why the last inbound pass skipped each issue key (for a later dry-run command).
         self.last_skips: dict[str, str] = {}
         # Cards of this connection seen by the last full pass; the sync pane reads them.
@@ -249,11 +266,19 @@ class SyncEngine:
                 continue
             link = Link(tracker, issue.key, issue.url, self.conn)
             try:
+                ws = self._workspace_for(issue)
+                body = self._render_body(issue, ws)
+                model, provider = match_model(issue, self.model_rules, self.roles_file)
                 card_id = self.kanban.create_card(
                     card_title(issue.key, issue.title),
-                    card_body(tracker, issue.key, issue.url, issue.body, self.conn),
+                    body,
                     idempotency_key=idempotency_key(tracker, issue.key, self.conn),
                     assignee=self.assignee,
+                    workspace=f"worktree:{ws['worktree']}" if ws.get("worktree") else None,
+                    branch=ws.get("branch") or None,
+                    skills=self.skills,
+                    model=model,
+                    provider=provider,
                 )
             except RateLimited:
                 self.last_skips = skips
@@ -273,6 +298,27 @@ class SyncEngine:
         if not needle:
             return False
         return any(str(name).casefold() == needle for name in (*issue.labels, *issue.ancestor_labels))
+
+    def _workspace_for(self, issue: Issue) -> dict[str, str]:
+        if self.workspace.get("mode") != "worktree":
+            return {}
+        return ensure_worktree(issue.key, issue.title, self.workspace, self.git)
+
+    def _render_body(self, issue: Issue, ws: Mapping[str, str]) -> str:
+        tracker = self.adapter.name
+        if not self.card_template:
+            return card_body(tracker, issue.key, issue.url, issue.body, self.conn)
+        path = Path(self.card_template).expanduser()
+        try:
+            template = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise RuntimeError(f"card_template {path}: {exc.strerror or exc}") from exc
+        rendered = render_card_template(template, {
+            "key": issue.key, "title": issue.title, "url": issue.url or "", "body": issue.body or "",
+            "base": ws.get("base") or "", "base_sha": ws.get("base_sha") or "",
+            "worktree": ws.get("worktree") or "", "branch": ws.get("branch") or "",
+        })
+        return card_body_from_template(tracker, issue.key, issue.url, rendered, self.conn)
 
     # ── outbound: card status -> tracker state ────────────────────────────
 

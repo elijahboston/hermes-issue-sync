@@ -15,7 +15,8 @@ from typing import Any, Mapping
 # Settings each connection may override; anything missing falls back to the top-level value.
 SHARED_KEYS = ("state_map", "assignee", "board", "poll_interval_seconds",
                "api_key_env", "base_url_env", "email_env", "token_env",
-               "admit", "max_active", "order", "leaf_only", "skip_blocked", "exclude_label")
+               "admit", "max_active", "order", "leaf_only", "skip_blocked", "exclude_label",
+               "card_template", "workspace", "skills", "model_rules", "roles_file", "reviewer")
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -73,7 +74,8 @@ def _build(raw: Mapping[str, Any], defaults: Mapping[str, Any], conn_id: str) ->
     tracker = str(raw.get("tracker") or "").strip().lower()
     settings = {key: raw[key] if raw.get(key) not in (None, "") else defaults.get(key) for key in SHARED_KEYS}
     settings.update(tracker=tracker, filter=_filter(raw))
-    for key in ("assignee", "board", "api_key_env", "base_url_env", "email_env", "token_env"):
+    for key in ("assignee", "board", "api_key_env", "base_url_env", "email_env", "token_env",
+                "card_template", "roles_file", "reviewer"):
         settings[key] = str(settings.get(key) or "").strip()
     if not tracker:
         return Connection(conn_id, "", settings, "no tracker set")

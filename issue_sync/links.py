@@ -69,6 +69,26 @@ def card_body(tracker: str, key: str, url: str, body: str, conn: str = "") -> st
     return "\n\n".join(parts) + "\n"
 
 
+class _SafeFormat(dict):
+    """``str.format_map`` that leaves unknown ``{placeholders}`` intact."""
+
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def render_card_template(template: str, values: Mapping[str, str]) -> str:
+    return template.format_map(_SafeFormat(values))
+
+
+def card_body_from_template(tracker: str, key: str, url: str, rendered: str, conn: str = "") -> str:
+    """Marker first, then the rendered template. ``link_from_card`` depends on that order."""
+    marker = build_marker(tracker, key, url, conn)
+    text = rendered.strip("\n")
+    if text:
+        return marker + "\n\n" + text + "\n"
+    return marker + "\n"
+
+
 def parse_marker(body: str | None) -> Link | None:
     """Parse the marker from the first non-blank line of a card body."""
     if not body:
