@@ -10,7 +10,10 @@ from issue_sync.links import card_body, link_from_card
 from issue_sync.state import MemoryStore, SyncState
 
 
-def _engine(adapter=None, kanban=None, **settings):
+def _engine(adapter=None, kanban=None, *, default_cap=False, **settings):
+    """Tests of ordering/filters run uncapped; ``default_cap`` keeps the real default (1)."""
+    if not default_cap:
+        settings.setdefault("max_active", 0)
     adapter = adapter or FakeAdapter()
     kanban = kanban or FakeKanban()
     state = SyncState(MemoryStore())
@@ -28,16 +31,17 @@ def _create_order(kanban: FakeKanban) -> list[str]:
 # ── defaults ──────────────────────────────────────────────────────────────
 
 
-def test_defaults_admit_every_open_unblocked_issue():
-    engine, adapter, kanban = _engine()
+def test_defaults_admit_one_open_unblocked_issue_at_a_time():
+    engine, adapter, kanban = _engine(default_cap=True)
     adapter.add_issue("A")
     adapter.add_issue("B")
     adapter.add_issue("C", closed=True)
-    assert engine.poll_inbound() == 2
-    assert sorted(_keys(kanban)) == ["A", "B"]
-    assert engine.last_skips == {"C": "closed"}
+    assert engine.poll_inbound() == 1
+    assert len(_keys(kanban)) == 1
+    assert engine.last_skips["C"] == "closed"
+    assert sorted(k for k, why in engine.last_skips.items() if why == "cap") == sorted({"A", "B"} - set(_keys(kanban)))
     assert engine.admit == "label"
-    assert engine.max_active is None
+    assert engine.max_active == 1
     assert engine.order == "priority"
     assert engine.leaf_only is False
     assert engine.skip_blocked is True
@@ -210,3 +214,35 @@ def test_already_linked_is_recorded():
     engine.poll_inbound()
     assert engine.last_skips["A"] == "linked"
     assert "B" not in engine.last_skips
+
+
+# ── max_active safe default ───────────────────────────────────────────────
+
+
+def test_max_active_unset_admits_one_card_even_with_many_labelled_issues():
+    """A fresh install must never flood the board, however many issues carry the label."""
+    engine, adapter, kanban = _engine(default_cap=True)
+    for key in ("A", "B", "C", "D", "E"):
+        adapter.add_issue(key)
+    assert engine.poll_inbound() == 1
+    assert engine.poll_inbound() == 0  # the first card is still active
+    assert len(kanban.cards) == 1
+
+
+def test_max_active_zero_opts_out_to_unlimited():
+    engine, adapter, kanban = _engine(max_active=0)
+    for key in ("A", "B", "C"):
+        adapter.add_issue(key)
+    assert engine.max_active is None
+    assert engine.poll_inbound() == 3
+
+
+def test_max_active_invalid_falls_back_to_one():
+    engine, _, _ = _engine(default_cap=True, max_active="lots")
+    assert engine.max_active == 1
+
+
+def test_max_active_default_reaches_connections_without_their_own_value():
+    (conn,) = parse_connections({"connections": [{"id": "a", "tracker": "linear", "projects": ["P"]}]})
+    engine = SyncEngine(FakeAdapter(), FakeKanban(), SyncState(MemoryStore()), conn.settings)
+    assert engine.max_active == 1

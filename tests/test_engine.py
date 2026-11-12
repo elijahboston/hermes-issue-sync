@@ -31,7 +31,7 @@ class Env:
         self.state = SyncState(MemoryStore())
         self.clock = Clock()
         self.engine = SyncEngine(self.adapter, self.kanban, self.state,
-                                 {"tracker": "fake", "state_map": STATE_MAP, **settings}, clock=self.clock)
+                                 {"tracker": "fake", "state_map": STATE_MAP, "max_active": 0, **settings}, clock=self.clock)
 
     def card_for(self, key: str) -> str:
         """Id of the card linked to ``key``, created through a normal inbound poll."""

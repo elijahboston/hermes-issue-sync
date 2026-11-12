@@ -92,10 +92,10 @@ config_schema:
       no projects is a configuration error and never means the whole workspace.
   max_active:
     type: int
-    default: 0
+    default: 1
     description: >-
       Cap on this connection's cards in todo, ready, running, review or scheduled (blocked,
-      triage, done and archived do not count). 0 or unset means unlimited. Each pass admits
+      triage, done and archived do not count). Defaults to 1; set 0 for unlimited. Each pass admits
       at most max_active minus currently active cards.
   order:
     type: str

@@ -46,7 +46,7 @@ _DEFAULTS: dict[str, Any] = {
     "email_env": "JIRA_EMAIL",
     "token_env": "JIRA_API_TOKEN",
     "admit": "label",
-    "max_active": 0,  # 0 = unlimited
+    "max_active": 1,  # 0 = unlimited (explicit opt-out)
     "order": "priority",
     "leaf_only": False,
     "skip_blocked": True,

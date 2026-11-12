@@ -26,7 +26,7 @@ def _setup(tmp_path):
          "api_key_env": "SECRET_NAME_ONLY"}]})
     adapter, kanban = FakeAdapter(), FakeKanban()
     state = SyncState(MemoryStore(), namespace="lin")
-    engine = SyncEngine(adapter, kanban, state, {"state_map": STATE_MAP}, conn="lin")
+    engine = SyncEngine(adapter, kanban, state, {"state_map": STATE_MAP, "max_active": 0}, conn="lin")
     return conn, adapter, kanban, state, engine
 
 

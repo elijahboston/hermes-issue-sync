@@ -62,13 +62,19 @@ def _admit(value: Any) -> str:
     return text if text in ("label", "all") else "label"
 
 
+DEFAULT_MAX_ACTIVE = 1
+
+
 def _max_active(value: Any) -> int | None:
+    """Cap on active cards. Unset or invalid -> 1, so a fresh install never floods a board;
+    an explicit 0 (or negative) opts out to unlimited."""
     if isinstance(value, bool) or value in (None, ""):
-        return None
+        return DEFAULT_MAX_ACTIVE
     try:
         n = int(value)
     except (TypeError, ValueError):
-        return None
+        logger.warning("issue-sync: max_active %r is not a number; using %d", value, DEFAULT_MAX_ACTIVE)
+        return DEFAULT_MAX_ACTIVE
     return n if n >= 1 else None
 
 
