@@ -223,6 +223,10 @@ that is not a JSON object, wrong types, `provider` without `model` — creates n
 the error, and retries next pass. Failures and skips do not consume a `max_active` slot, so
 later candidates in the same pass can still be admitted.
 
+Make the script **safe to run twice** for the same issue. It runs again on the next pass when
+anything after it fails (for example `kanban create`), so reuse an existing worktree or branch
+instead of failing on it.
+
 `prepare_command` is read only from the owner's plugin settings (`config.yaml`). This plugin
 does not expose a tool, command, or API route that sets it.
 
