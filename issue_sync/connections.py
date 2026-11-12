@@ -16,7 +16,9 @@ from typing import Any, Mapping
 SHARED_KEYS = ("state_map", "assignee", "board", "poll_interval_seconds",
                "api_key_env", "base_url_env", "email_env", "token_env",
                "admit", "max_active", "order", "leaf_only", "skip_blocked", "exclude_label",
-               "prepare_command", "prepare_timeout_seconds")
+               "prepare_command", "prepare_timeout_seconds",
+               "done_gate", "land_command", "land_timeout_seconds", "land_retry_seconds",
+               "merged_base")
 _ID_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 
 
@@ -70,6 +72,19 @@ def _filter(raw: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _done_gate(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in ("immediate", "merged", "command") else "immediate"
+
+
+def _has_land_command(value: Any) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, (list, tuple)):
+        return any(str(part).strip() for part in value)
+    return False
+
+
 def _build(raw: Mapping[str, Any], defaults: Mapping[str, Any], conn_id: str) -> Connection:
     tracker = str(raw.get("tracker") or "").strip().lower()
     settings = {key: raw[key] if raw.get(key) not in (None, "") else defaults.get(key) for key in SHARED_KEYS}
@@ -82,6 +97,13 @@ def _build(raw: Mapping[str, Any], defaults: Mapping[str, Any], conn_id: str) ->
     admit = str(settings.get("admit") or "label").strip().lower()
     if admit == "all" and not Connection(conn_id, tracker, settings).projects:
         return Connection(conn_id, tracker, settings, "admit: all requires at least one project")
+    gate = _done_gate(settings.get("done_gate"))
+    settings["done_gate"] = gate
+    settings["merged_base"] = str(settings.get("merged_base") or "").strip()
+    if gate == "command" and not _has_land_command(settings.get("land_command")):
+        return Connection(conn_id, tracker, settings, "done_gate: command requires land_command")
+    if gate == "merged" and not settings["merged_base"]:
+        return Connection(conn_id, tracker, settings, "done_gate: merged requires merged_base")
     return Connection(conn_id, tracker, settings)
 
 

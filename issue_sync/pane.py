@@ -43,8 +43,14 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
         if card.get("status") == "archived":
             continue
         entry = links.get(link.id) or {}
+        landing = entry.get("landing") if isinstance(entry.get("landing"), dict) else {}
+        landing_status = landing.get("status")
+        if landing_status not in ("running", "waiting", "failed", "landed"):
+            landing_status = None
+        landing_error = landing.get("error") if landing_status == "failed" else None
         waiting = bool(entry.get("asked_block")) and entry.get("asked_block") != entry.get("answered_block") \
             and card.get("status") == "blocked"
+        waiting = waiting or landing_status == "failed"
         items.append({
             "key": link.key,
             "url": link.url,
@@ -53,15 +59,18 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
             "card_status": card.get("status"),
             "tracker_state": entry.get("last_pushed_state"),
             "waiting": waiting,
-            "question": entry.get("question") if waiting else None,
+            "question": entry.get("question") if waiting and card.get("status") == "blocked" else None,
             "error": entry.get("last_error"),
+            "landing": landing_status,
+            "landing_error": landing_error,
         })
     # Links with an error but no card yet (a failed card create) still need to be visible.
     for link_id, entry in sorted(links.items()):
         if link_id not in seen and isinstance(entry, dict) and entry.get("last_error") and not entry.get("card_id"):
             items.append({"key": link_id.rsplit(":", 1)[-1], "url": "", "title": "", "card_id": None,
                           "card_status": None, "tracker_state": None, "waiting": False,
-                          "question": None, "error": entry["last_error"]})
+                          "question": None, "error": entry["last_error"],
+                          "landing": None, "landing_error": None})
     order = {"blocked": 0, "running": 1, "ready": 2, "review": 3, "todo": 4, "done": 5, "archived": 6}
     items.sort(key=lambda i: (not i["waiting"], not i["error"], order.get(i["card_status"] or "", 9), i["key"]))
     backoff = state.backoff_until if state is not None else None

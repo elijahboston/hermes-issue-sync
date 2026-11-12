@@ -133,3 +133,38 @@ config_schema:
     description: >-
       Seconds before the prepare command is killed. A timeout counts as a failure; the issue
       is retried on the next pass and does not consume a max_active slot. Default 120.
+  done_gate:
+    type: str
+    choices: [immediate, merged, command]
+    default: immediate
+    description: >-
+      When the tracker issue may go to Done. "immediate" (default) pushes Done and posts the
+      summary as soon as the card reaches done. "merged" waits until the card branch has
+      reached merged_base (git ancestry or a gh squash-merge). "command" runs land_command
+      in the background and waits for it to succeed.
+  land_command:
+    type: str
+    default: ""
+    description: >-
+      Owner-set command run when done_gate is "command". A string is split with shlex (no
+      shell); a list of strings is argv. ~ in the first element is expanded. Required when
+      done_gate is command. Owner-only: set in config.yaml; nothing in this plugin writes
+      this setting.
+  land_timeout_seconds:
+    type: int
+    default: 1800
+    description: >-
+      Seconds before a land command is killed. A timeout counts as exit 2 (failed). Default 1800.
+  land_retry_seconds:
+    type: int
+    default: 300
+    description: >-
+      Seconds to wait after a land command exit 1 ("not yet") or a merged check that has not
+      landed, before trying again. Default 300.
+  merged_base:
+    type: str
+    default: ""
+    description: >-
+      Branch the card branch must reach when done_gate is "merged", e.g. "main". Required in
+      merged mode. Checked with git fetch + merge-base --is-ancestor, and (if gh is on PATH)
+      gh pr view for squash merges.

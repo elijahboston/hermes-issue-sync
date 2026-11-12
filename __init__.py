@@ -53,6 +53,11 @@ _DEFAULTS: dict[str, Any] = {
     "exclude_label": "",
     "prepare_command": "",
     "prepare_timeout_seconds": 120,
+    "done_gate": "immediate",
+    "land_command": "",
+    "land_timeout_seconds": 1800,
+    "land_retry_seconds": 300,
+    "merged_base": "",
 }
 
 _logged: set[str] = set()
@@ -72,7 +77,7 @@ def _read_settings(ctx: Any) -> dict[str, Any]:
         value = ctx.get_config(key, default=default)
         settings[key] = default if value is None else value
     for key in ("tracker", "assignee", "board", "api_key_env", "base_url_env", "email_env", "token_env",
-                "admit", "order", "exclude_label"):
+                "admit", "order", "exclude_label", "done_gate", "merged_base"):
         settings[key] = str(settings[key]).strip()
     # A credential name saved blank (e.g. a cleared settings field) means "use the default name".
     for key in ("api_key_env", "base_url_env", "email_env", "token_env"):

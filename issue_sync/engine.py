@@ -9,11 +9,17 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import shutil
+import subprocess
+import tempfile
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping
 
 from .adapters.base import Issue, RateLimited, TrackerAdapter
+from .land_runner import launch_argv, read_result
 from .links import (Link, asked_note, build_marker, card_body, card_title, done_note, has_done_note,
                     has_note, idempotency_key, link_from_card, parse_marker)
 from .prepare import PrepareError, run_prepare
@@ -129,6 +135,53 @@ def _prepare_timeout(value: Any) -> float:
     return seconds if math.isfinite(seconds) and seconds > 0 else DEFAULT_PREPARE_TIMEOUT
 
 
+DONE_GATES = frozenset({"immediate", "merged", "command"})
+DEFAULT_DONE_GATE = "immediate"
+DEFAULT_LAND_TIMEOUT = 1800.0
+DEFAULT_LAND_RETRY = 300.0
+LAND_TIMEOUT_GRACE = 60.0
+LAND_COMMENT_LIMIT = 1500
+LAND_CMD_TIMEOUT = 60.0
+
+
+def _done_gate(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    return text if text in DONE_GATES else DEFAULT_DONE_GATE
+
+
+def _land_command(value: Any) -> str | list[str] | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        argv = [str(part) for part in value]
+        return argv or None
+    logger.warning("issue-sync: land_command must be a string or list; ignoring it")
+    return None
+
+
+def _seconds(value: Any, default: float, setting: str) -> float:
+    if isinstance(value, bool) or value in (None, ""):
+        return default
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        logger.warning("issue-sync: %s %r is not a number; using %g", setting, value, default)
+        return default
+    return seconds if math.isfinite(seconds) and seconds > 0 else default
+
+
+def _land_failure_body(tail: str) -> str:
+    clip = (tail or "")[-LAND_COMMENT_LIMIT:]
+    quoted = ""
+    if clip.strip():
+        quoted = "\n".join(f"> {line}" for line in clip.splitlines()) + "\n\n"
+    return ("Hermes finished the work but could not land it:\n\n"
+            + quoted
+            + "Reply here when it's fixed and Hermes will try again.")
+
+
 def _prepared_card_body(tracker: str, key: str, url: str, conn: str, body: str) -> str:
     """Marker on line 1, then a blank line, then the hook body (a leading marker stripped)."""
     marker = build_marker(tracker, key, url, conn)
@@ -145,7 +198,11 @@ class SyncEngine:
     def __init__(self, adapter: TrackerAdapter, kanban: Any, state: SyncState,
                  settings: Mapping[str, Any] | None, clock: Callable[[], float] = time.time,
                  *, conn: str = "", owns_legacy: bool = False,
-                 prepare_runner: Callable[..., Any] | None = None) -> None:
+                 prepare_runner: Callable[..., Any] | None = None,
+                 land_launcher: Callable[..., Any] | None = None,
+                 git_runner: Callable[..., Any] | None = None,
+                 land_dir: str | Path | None = None,
+                 which: Callable[[str], str | None] | None = None) -> None:
         settings = settings if isinstance(settings, Mapping) else {}
         self.adapter = adapter
         # Connection id written into new card markers; "" for the single-tracker setup.
@@ -171,8 +228,21 @@ class SyncEngine:
         self.prepare_command = _prepare_command(settings.get("prepare_command"))
         self.prepare_timeout = _prepare_timeout(settings.get("prepare_timeout_seconds"))
         self._prepare_runner = prepare_runner
+        self.done_gate = _done_gate(settings.get("done_gate"))
+        self.land_command = _land_command(settings.get("land_command"))
+        self.land_timeout = _seconds(settings.get("land_timeout_seconds"), DEFAULT_LAND_TIMEOUT,
+                                    "land_timeout_seconds")
+        self.land_retry = _seconds(settings.get("land_retry_seconds"), DEFAULT_LAND_RETRY,
+                                  "land_retry_seconds")
+        self.merged_base = str(settings.get("merged_base") or "").strip()
+        self._land_launcher = land_launcher
+        self._git_runner = git_runner
+        self._land_dir = Path(land_dir) if land_dir is not None else None
+        self._which = which or shutil.which
         # Why the last inbound pass skipped each issue key (for a later dry-run command).
         self.last_skips: dict[str, str] = {}
+        # Landing status per issue key (for a later dry-run command).
+        self.last_landing: dict[str, str] = {}
         # Cards of this connection seen by the last full pass; the sync pane reads them.
         self.last_cards: list[dict[str, Any]] = []
         # Hooks and the dispatcher tick may race; a busy engine skips rather than queueing work.
@@ -401,6 +471,20 @@ class SyncEngine:
         if link is None or not self.owns(link):
             return 0
         status = card.get("status")
+        if (
+            status == "done"
+            and self.done_gate in ("merged", "command")
+            and (self.state.link(link.id).get("landing") or {}).get("status") != "landed"
+        ):
+            try:
+                if not self._progress_landing(link, card, show):
+                    return 0
+            except RateLimited:
+                raise
+            except Exception as exc:
+                self.state.update_link(link.id, card_id=card.get("id"), last_error=_error_text(exc))
+                logger.warning("issue-sync: landing failed for %s: %s", link.id, _error_text(exc))
+                return 0
         target = self.state_map.get(status) if isinstance(status, str) else None
         if target is None:
             return 0
@@ -446,6 +530,250 @@ class SyncEngine:
             self.kanban.comment(card_id, done_note(link))
         else:
             self.state.update_link(link.id, done_comment_posted=True)
+
+    # ── done gate / background landing (CORE-633) ─────────────────────────
+
+    def _progress_landing(self, link: Link, card: Mapping[str, Any],
+                         show: Mapping[str, Any] | None) -> bool:
+        """Advance landing for a done card. True when it has landed (caller then pushes Done)."""
+        raw = self.state.link(link.id).get("landing")
+        landing = dict(raw) if isinstance(raw, dict) else {}
+        status = landing.get("status")
+        now = self.clock()
+        card_id = card.get("id")
+
+        if status == "landed":
+            self.last_landing[link.key] = "landed"
+            return True
+
+        if status == "failed":
+            if not self._requeue_land_on_reply(link, card_id, landing):
+                self.last_landing[link.key] = "failed"
+                return False
+            status = landing.get("status")
+
+        if status == "running":
+            outcome = self._land_outcome(landing, now)
+            if outcome is None:
+                self.last_landing[link.key] = "running"
+                return False
+            return self._apply_land_exit(link, card, landing, outcome)
+
+        next_try = landing.get("next_try_at")
+        try:
+            next_at = float(next_try) if next_try is not None else None
+        except (TypeError, ValueError):
+            next_at = None
+        if next_at is not None and now < next_at:
+            self.last_landing[link.key] = status or "waiting"
+            return False
+
+        if self.done_gate == "merged":
+            return self._check_merged(link, card, show, landing)
+        return self._launch_land(link, card, show, landing)
+
+    def _land_outcome(self, landing: Mapping[str, Any], now: float) -> dict[str, Any] | None:
+        path = landing.get("result_file")
+        if path:
+            data = read_result(path)
+            if data is not None:
+                return data
+            if Path(path).is_file():
+                return {"exit": 2, "stdout_tail": "", "stderr_tail": "invalid land result file"}
+        started = landing.get("started_at")
+        try:
+            started_at = float(started) if started is not None else None
+        except (TypeError, ValueError):
+            started_at = None
+        if started_at is not None and now - started_at >= self.land_timeout + LAND_TIMEOUT_GRACE:
+            return {"exit": 2, "stdout_tail": "", "stderr_tail": "land command timed out"}
+        return None
+
+    def _apply_land_exit(self, link: Link, card: Mapping[str, Any], landing: dict[str, Any],
+                        result: Mapping[str, Any]) -> bool:
+        try:
+            code = int(result.get("exit"))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            code = 2
+        stdout = str(result.get("stdout_tail") or "")
+        stderr = str(result.get("stderr_tail") or "")
+        if code == 0:
+            landing["status"] = "landed"
+            landing.pop("error", None)
+            self.state.update_link(link.id, landing=landing, last_error=None)
+            self.last_landing[link.key] = "landed"
+            return True
+        if code == 1:
+            landing["status"] = "waiting"
+            landing["next_try_at"] = self.clock() + self.land_retry
+            landing.pop("error", None)
+            self.state.update_link(link.id, landing=landing)
+            self.last_landing[link.key] = "waiting"
+            return False
+        tail = stdout if stdout.strip() else stderr
+        landing["status"] = "failed"
+        landing["error"] = tail[-LAND_COMMENT_LIMIT:]
+        self.state.update_link(link.id, landing=landing)
+        self.last_landing[link.key] = "failed"
+        self._post_land_failure(link, card.get("id"), landing, tail)
+        return False
+
+    def _post_land_failure(self, link: Link, card_id: Any, landing: dict[str, Any], tail: str) -> None:
+        if landing.get("failure_posted_attempt") == landing.get("attempt"):
+            return
+        self.adapter.post_comment(link.key, sign(_land_failure_body(tail)))
+        _, cursor = self.adapter.list_comments_since(link.key, self.state.link(link.id).get("comment_cursor"))
+        landing["failure_posted_attempt"] = landing.get("attempt")
+        self.state.update_link(link.id, landing=landing, comment_cursor=cursor, last_error=None)
+
+    def _requeue_land_on_reply(self, link: Link, card_id: Any, landing: dict[str, Any]) -> bool:
+        entry = self.state.link(link.id)
+        comments, new_cursor = self.adapter.list_comments_since(link.key, entry.get("comment_cursor"))
+        answers = [c for c in comments if not c.is_bot and c.body.strip()]
+        if not answers:
+            if new_cursor != entry.get("comment_cursor"):
+                self.state.update_link(link.id, comment_cursor=new_cursor)
+            return False
+        text = "\n\n".join(
+            f"{c.author or 'someone'}: {strip_signature(c.body).strip()}" for c in answers
+        )
+        if card_id:
+            self.kanban.comment(card_id, text)
+        landing["status"] = "waiting"
+        landing["next_try_at"] = self.clock()
+        landing.pop("error", None)
+        self.state.update_link(link.id, landing=landing, comment_cursor=new_cursor, last_error=None)
+        self.last_landing[link.key] = "waiting"
+        return True
+
+    def _launch_land(self, link: Link, card: Mapping[str, Any], show: Mapping[str, Any] | None,
+                    landing: dict[str, Any]) -> bool:
+        if not self.land_command:
+            return self._apply_land_exit(
+                link, card, landing,
+                {"exit": 2, "stdout_tail": "", "stderr_tail": "done_gate: command requires land_command"},
+            )
+        show = self._ensure_show(card, show)
+        task = show.get("task") or dict(card)
+        card_id = card.get("id") or task.get("id")
+        try:
+            attempt = int(landing.get("attempt") or 0) + 1
+        except (TypeError, ValueError):
+            attempt = 1
+        folder = self._land_root() / "land" / (self.conn or "_")
+        folder.mkdir(parents=True, exist_ok=True)
+        result_file = folder / f"{card_id}-{attempt}.json"
+        summary_file = folder / f"{card_id}-{attempt}.summary"
+        summary = show.get("latest_summary")
+        summary_file.write_text(summary if isinstance(summary, str) else "", encoding="utf-8")
+        argv = launch_argv(result_file, self.land_command, self.land_timeout)
+        env = os.environ.copy()
+        env["ISSUE_SYNC_CONNECTION"] = str(self.conn or "")
+        env["ISSUE_KEY"] = link.key
+        env["ISSUE_URL"] = link.url or ""
+        env["CARD_ID"] = str(card_id or "")
+        env["WORKTREE"] = str(task.get("workspace_path") or card.get("workspace_path") or "")
+        env["BRANCH"] = str(task.get("branch_name") or card.get("branch_name") or "")
+        env["SUMMARY_FILE"] = str(summary_file)
+        landing.update({
+            "attempt": attempt,
+            "started_at": self.clock(),
+            "result_file": str(result_file),
+            "status": "running",
+            "next_try_at": None,
+        })
+        landing.pop("error", None)
+        self.state.update_link(link.id, landing=landing, card_id=card_id)
+        try:
+            self._spawn_land(argv, env)
+        except FileNotFoundError:
+            return self._apply_land_exit(
+                link, card, landing, {"exit": 2, "stdout_tail": "", "stderr_tail": f"{argv[0]!r} not found"},
+            )
+        except OSError as exc:
+            return self._apply_land_exit(
+                link, card, landing, {"exit": 2, "stdout_tail": "", "stderr_tail": _error_text(exc)},
+            )
+        self.last_landing[link.key] = "running"
+        return False
+
+    def _spawn_land(self, argv: list[str], env: dict[str, str]) -> None:
+        launcher = self._land_launcher or subprocess.Popen
+        launcher(
+            argv,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            env=env,
+        )
+
+    def _check_merged(self, link: Link, card: Mapping[str, Any], show: Mapping[str, Any] | None,
+                     landing: dict[str, Any]) -> bool:
+        worktree = str(card.get("workspace_path") or "")
+        branch = str(card.get("branch_name") or "")
+        if not worktree or not branch:
+            show = self._ensure_show(card, show)
+            task = show.get("task") or {}
+            worktree = worktree or str(task.get("workspace_path") or "")
+            branch = branch or str(task.get("branch_name") or "")
+        base = self.merged_base
+        landed = False
+        if worktree and branch and base:
+            try:
+                self._run_cmd(["git", "fetch", "origin"], cwd=worktree)
+                proc = self._run_cmd(
+                    ["git", "merge-base", "--is-ancestor", branch, f"origin/{base}"], cwd=worktree,
+                )
+                if getattr(proc, "returncode", 1) == 0:
+                    landed = True
+            except Exception:
+                landed = False
+            if not landed and self._which("gh"):
+                try:
+                    proc = self._run_cmd(
+                        ["gh", "pr", "view", branch, "--json", "state", "-q", ".state"], cwd=worktree,
+                    )
+                    state = (getattr(proc, "stdout", None) or "").strip()
+                    if getattr(proc, "returncode", 1) == 0 and state == "MERGED":
+                        landed = True
+                except Exception:
+                    pass
+        if landed:
+            landing["status"] = "landed"
+            landing.pop("error", None)
+            self.state.update_link(link.id, landing=landing, last_error=None)
+            self.last_landing[link.key] = "landed"
+            return True
+        landing["status"] = "waiting"
+        landing["next_try_at"] = self.clock() + self.land_retry
+        self.state.update_link(link.id, landing=landing)
+        self.last_landing[link.key] = "waiting"
+        return False
+
+    def _run_cmd(self, argv: list[str], *, cwd: str) -> Any:
+        runner = self._git_runner or subprocess.run
+        return runner(
+            argv, cwd=cwd, capture_output=True, text=True, check=False, shell=False,
+            timeout=LAND_CMD_TIMEOUT,
+        )
+
+    def _ensure_show(self, card: Mapping[str, Any], show: Mapping[str, Any] | None) -> Mapping[str, Any]:
+        if show is not None:
+            return show
+        card_id = card.get("id")
+        if not card_id:
+            return {"task": dict(card), "latest_summary": None, "comments": []}
+        return self.kanban.show_card(card_id)
+
+    def _land_root(self) -> Path:
+        if self._land_dir is not None:
+            return self._land_dir
+        from .pane import data_dir
+        folder = data_dir()
+        return folder if folder is not None else Path(tempfile.gettempdir()) / "hermes-issue-sync"
+
 
     # ── blocking questions (CORE-605) ─────────────────────────────────────
 
