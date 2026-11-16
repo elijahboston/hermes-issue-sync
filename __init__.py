@@ -271,14 +271,23 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
         if not runners:
             _log_once(logging.INFO, "issue-sync: no connections configured (%s); sync is off", CONNECTIONS_SETTING)
 
+    def preview_runners() -> list[_Runner]:
+        """Runners for a dry run. While sync is disabled the live runners hold no engines, but a
+        preview before enabling is the point of a dry run, so build read-only ones on demand."""
+        return runners if _enabled(settings) else _build_runners(ctx, settings, kanban)
+
+    def disabled_note() -> str:
+        return ("" if _enabled(settings) else
+                "note: sync is disabled; this is a preview of what it would do once enabled.\n")
+
     def issues_command(raw_args: str = "", **_kwargs: Any) -> str:
         sub = (raw_args or "").strip().lower()
         if sub == "show":
             return show_pane()
         if sub == "dry-run":
             try:
-                text, _code = dry_run_mod.run_runners(runners)
-                return text
+                text, _code = dry_run_mod.run_runners(preview_runners())
+                return disabled_note() + text
             except Exception as exc:
                 logger.warning("issue-sync: dry-run failed: %s: %s", type(exc).__name__, exc)
                 return f"issue-sync: dry-run unavailable ({type(exc).__name__}: {exc})"
@@ -310,8 +319,9 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
         cmd = getattr(args, "issues_command", None)
         if cmd == "dry-run":
             try:
+                as_json = bool(getattr(args, "as_json", False))
                 text, code = dry_run_mod.run_runners(
-                    runners,
+                    preview_runners(),
                     connection=getattr(args, "connection", None),
                     with_prepare=bool(getattr(args, "with_prepare", False)),
                     as_json=bool(getattr(args, "as_json", False)),
@@ -319,6 +329,8 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
             except Exception as exc:
                 print(f"issue-sync: dry-run failed: {type(exc).__name__}: {exc}", file=sys.stderr)
                 return 1
+            if not as_json:
+                text = disabled_note() + text
             print(text)
             return code
         if cmd == "setup":

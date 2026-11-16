@@ -302,3 +302,26 @@ def test_run_runners_filters_connection():
     assert "connection bbb:" in text
     assert "connection aaa:" not in text
     assert "B-1" in text
+
+
+def test_dry_run_previews_connections_while_sync_is_disabled(plugin, stub_ctx, capsys):
+    """Previewing before enabling is the point of a dry run: a disabled plugin must still
+    build read-only engines for it (and the live tick must stay off)."""
+    kanban = FakeKanban()
+    ctx = stub_ctx({"enabled": False, "connections": [
+        {"id": "p", "tracker": "fake", "projects": ["P"], "max_active": 2}]})
+    plugin.register(ctx, kanban=kanban, background=False)
+    ctx.hooks["on_kanban_dispatch_tick"](board="default")
+    assert kanban.calls == []  # still no sync while disabled
+    spec = ctx.cli_commands["issues"]
+    parser = ArgumentParser()
+    spec["setup_fn"](parser)
+    assert spec["handler_fn"](parser.parse_args(["dry-run", "--json"])) == 0
+    data = json.loads(capsys.readouterr().out)
+    assert data["connections"][0]["max_active"] == 2
+    assert spec["handler_fn"](parser.parse_args(["dry-run"])) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("note: sync is disabled") and "max_active: 2" in out
+    assert not any(c[0] in ("create_card", "comment", "unblock") for c in kanban.calls)
+    handler, _ = ctx.commands["issues"]
+    assert "max_active: 2" in handler("dry-run")
