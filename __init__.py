@@ -7,6 +7,7 @@ used: ``ctx.register_hook``, ``ctx.register_command``, ``ctx.get_config``, ``ctx
 from __future__ import annotations
 
 import contextvars
+from pathlib import Path
 import logging
 import sys
 import threading
@@ -259,6 +260,22 @@ def publish_snapshot(runners: list[_Runner], enabled: bool, directory: Any = Non
         logger.debug("issue-sync: could not write the pane snapshot: %s: %s", type(exc).__name__, exc)
 
 
+SETUP_SKILL = Path(__file__).resolve().parent / "skills" / "setup" / "SKILL.md"
+
+
+def _register_setup_skill(ctx: Any) -> None:
+    """Ship the guided-setup skill (``hermes-issue-sync:setup``). Older Hermes builds without
+    ``register_skill`` simply skip it; the CLI it drives works either way."""
+    register_skill = getattr(ctx, "register_skill", None)
+    if register_skill is None:
+        return
+    try:
+        register_skill("setup", SETUP_SKILL,
+                       description="Use when connecting Linear or Jira to Hermes kanban with issue-sync.")
+    except Exception as exc:  # a skill must never stop the plugin from loading
+        logger.warning("issue-sync: could not register the setup skill: %s: %s", type(exc).__name__, exc)
+
+
 def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir: Any = None) -> None:
     settings = _read_settings(ctx)
     runners: list[_Runner] = []
@@ -345,6 +362,7 @@ def register(ctx: Any, *, kanban: Any = None, background: bool = True, pane_dir:
         description="Issue tracker sync for kanban cards",
         args_hint="[status|show|dry-run]",
     )
+    _register_setup_skill(ctx)
     ctx.register_cli_command(
         name="issues",
         help="Issue tracker sync: dry-run and setup",

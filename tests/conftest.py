@@ -61,6 +61,10 @@ class StubCtx:
     def register_command(self, name: str, handler: Callable[..., Any], **kwargs: Any) -> None:
         self.commands[name] = (handler, kwargs)
 
+    def register_skill(self, name: str, path: Any, description: str = "", **kwargs: Any) -> None:
+        self.skills = getattr(self, "skills", {})
+        self.skills[name] = dict(path=path, description=description)
+
     def register_cli_command(self, name: str, help: str, setup_fn: Callable[..., Any],
                              handler_fn: Callable[..., Any] | None = None,
                              description: str = "") -> None:

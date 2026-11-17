@@ -53,6 +53,11 @@ Jira, so a label-only filter pulls in every labelled issue from unrelated projec
 
 ### Setting up a connection
 
+Prefer to be walked through it? Ask your agent to load the `hermes-issue-sync:setup` skill
+(shipped with the plugin). It asks the questions in plain language, previews the config with
+`--print-only`, and runs `hermes issues setup` for you. It never asks for secret values.
+
+
 The fastest way to add a tracker is `hermes issues setup`. It writes one connection
 into the active profile's `config.yaml` and, if you choose a landing or prepare
 style, starter scripts under the plugin data dir (`hooks/<id>/`). It never asks
