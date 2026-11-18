@@ -1,0 +1,44 @@
+# Catalog bump draft: hermes-issue-sync 0.2.0
+
+Not opened yet. The owner approves before the PR goes to NousResearch/hermes-agent.
+
+- **PR title:** `plugin-catalog: bump hermes-issue-sync to 0.2.0`
+- **Compare:** https://github.com/elijahboston/hermes-issue-sync/compare/ed7dd85...e726662
+  (CORE-631 to 635, CORE-642, CORE-644, CORE-643). Pin to the **main** sha once
+  `issue/CORE-643` is merged. Today `e726662` exists only on the branch.
+- **Checks:** a fresh clone at `e726662` passes `hermes plugins validate --install-deps`, and all
+  four screenshot URLs below return 200.
+
+## `plugin-catalog/hermes-issue-sync.yaml`
+
+```yaml
+name: hermes-issue-sync
+repo: https://github.com/elijahboston/hermes-issue-sync
+sha: <main sha after merge; e726662… today>
+description: "Two-way sync between Hermes kanban cards and Linear or Jira issues. Open issues with a chosen label (or every open issue in the projects you pick) become cards, with admission control (max active cards, order, leaf issues only, skip blocked); card status moves the issue through its workflow; a finished card posts its summary on the issue; a worker that blocks with a question gets it posted on the issue, and the first human reply there unblocks the card with the answer. Optional owner-set prepare and land steps (e.g. make a worktree, open and auto-merge a PR) gate when an issue counts as done. Several connections run side by side, and one failing never stops the others. `hermes issues setup` writes a connection and starter scripts; `hermes issues dry-run` previews admission. Desktop adds an Issue Sync panel, a status-bar chip and kanban card badges; /issues status and /issues show work from any chat. Disclosure — calls api.linear.app and your Jira Cloud site with your own API key or token (read by name through the profile secret scope, never stored); moves issues and posts comments as you, each signed \"— via Hermes issue-sync\", including each finished card's summary, each blocked card's question and land-failure notes; turns the titles and descriptions of admitted issues into kanban cards, and the first reply on a blocked card's issue unblocks the card with that reply's text, so anyone who can label or comment on those issues supplies text your kanban workers act on (cards stay unassigned unless you set an assignee); runs a short background sync thread on kanban dispatcher ticks and runs `hermes kanban` subcommands to read and update the board; if you set prepare_command it runs that command (no shell, issue text on stdin only), and if you set land_command it starts that command detached in its own session so it survives a gateway restart; with done_gate merged it may run git fetch / git merge-base and, if gh is on PATH, gh pr view in the card's worktree; `hermes issues setup` merges one connection into the active profile's config.yaml and may write starter hooks/<id>/*.sh scripts (git/gh) under its data folder, which run only once you configure them as prepare_command / land_command; otherwise writes only to its own plugin data folder; no telemetry. On multi-profile gateways it binds the profile's secret scope itself through the public agent.secret_scope API until NousResearch/hermes-agent#151126 is fixed."
+maintainer: elijahboston
+tier: community
+category: automation
+requires_hermes: ">=0.21.6"
+docs_url: https://github.com/elijahboston/hermes-issue-sync#readme
+version: "0.2.0"
+screenshots:
+  - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/pane-redesign-dark.png
+  - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/linear-question.png
+  - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/linear-done-summary.png
+  - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/pane-redesign-light.png
+platforms: []
+capabilities:
+  provides_tools: []
+  provides_hooks:
+    - on_kanban_dispatch_tick
+    - kanban_task_claimed
+    - kanban_task_completed
+    - kanban_task_blocked
+  provides_middleware: []
+  requires_env: []
+```
+
+The new pane shots (`pane-redesign-dark.png`, `pane-redesign-light.png`) replace the old
+`panel-waiting.png` and `panel-boards.png`. They are renders of `desktop/plugin.js`'s real
+`SyncView` / `Chip` with React and the five mockup scenarios, not captures from a live Desktop.
