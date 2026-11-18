@@ -2,3 +2,7 @@
 # Kept out of pyproject.toml so Hermes does not treat the plugin as having dependencies.
 pytest>=8,<10
 fastapi>=0.110,<1
+# issue_sync/setup.py and tests/test_setup.py import yaml. Hermes does NOT declare
+# pyyaml (its pyproject lists ruamel.yaml); existing venvs only have it from older
+# installs or transitively (huggingface-hub), so don't rely on it at runtime.
+pyyaml>=6,<7
