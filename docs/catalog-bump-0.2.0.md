@@ -23,10 +23,11 @@ requires_hermes: ">=0.21.6"
 docs_url: https://github.com/elijahboston/hermes-issue-sync#readme
 version: "0.2.0"
 screenshots:
-  - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/pane-redesign-dark.png
+  - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/pane-busy-dark.png
+  - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/pane-trackers-light.png
+  - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/pane-error-dark.png
   - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/linear-question.png
   - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/linear-done-summary.png
-  - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/pane-redesign-light.png
 platforms: []
 capabilities:
   provides_tools: []
@@ -39,6 +40,6 @@ capabilities:
   requires_env: []
 ```
 
-The new pane shots (`pane-redesign-dark.png`, `pane-redesign-light.png`) replace the old
-`panel-waiting.png` and `panel-boards.png`. They are renders of `desktop/plugin.js`'s real
+The new pane shots (`pane-busy-dark.png`, `pane-trackers-light.png`, `pane-error-dark.png`,
+one scenario each) replace the old `panel-waiting.png` and `panel-boards.png`. They are renders of `desktop/plugin.js`'s real
 `SyncView` / `Chip` with React and the five mockup scenarios, not captures from a live Desktop.
