@@ -666,6 +666,9 @@ class SyncEngine:
             landing["status"] = "waiting"
             landing["next_try_at"] = self.clock() + self.land_retry
             landing.pop("error", None)
+            # The pane shows the land script's last line ("PR #101 set to auto-merge ...").
+            lines = [line.strip() for line in stdout.splitlines() if line.strip()]
+            landing["message"] = lines[-1][:300] if lines else None
             self.state.update_link(link.id, landing=landing)
             self.last_landing[link.key] = "waiting"
             return False

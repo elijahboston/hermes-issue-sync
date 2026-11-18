@@ -48,6 +48,9 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
         if landing_status not in ("running", "waiting", "failed", "landed"):
             landing_status = None
         landing_error = landing.get("error") if landing_status == "failed" else None
+        message = landing.get("message")
+        landing_message = message if landing_status in ("running", "waiting") and isinstance(message, str) \
+            and message.strip() else None
         waiting = bool(entry.get("asked_block")) and entry.get("asked_block") != entry.get("answered_block") \
             and card.get("status") == "blocked"
         waiting = waiting or landing_status == "failed"
@@ -63,6 +66,7 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
             "error": entry.get("last_error"),
             "landing": landing_status,
             "landing_error": landing_error,
+            "landing_message": landing_message,
         })
     # Links with an error but no card yet (a failed card create) still need to be visible.
     for link_id, entry in sorted(links.items()):
@@ -70,7 +74,7 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
             items.append({"key": link_id.rsplit(":", 1)[-1], "url": "", "title": "", "card_id": None,
                           "card_status": None, "tracker_state": None, "waiting": False,
                           "question": None, "error": entry["last_error"],
-                          "landing": None, "landing_error": None})
+                          "landing": None, "landing_error": None, "landing_message": None})
     order = {"blocked": 0, "running": 1, "ready": 2, "review": 3, "todo": 4, "done": 5, "archived": 6}
     items.sort(key=lambda i: (not i["waiting"], not i["error"], order.get(i["card_status"] or "", 9), i["key"]))
     backoff = state.backoff_until if state is not None else None

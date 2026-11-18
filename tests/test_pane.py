@@ -118,3 +118,55 @@ def test_snapshot_carries_tree_style_and_defaults_to_rounded():
     assert pane.build_snapshot([], tree_style="lines")["display"]["tree_style"] == "lines"
     assert pane.build_snapshot([], tree_style=" LINES ")["display"]["tree_style"] == "lines"
     assert pane.build_snapshot([], tree_style="zigzag")["display"]["tree_style"] == "rounded"
+
+
+def _done_card_with_landing(tmp_path, landing):
+    conn, adapter, kanban, state, engine = _setup(tmp_path)
+    adapter.add_issue("F-1", "lands later")
+    engine.tick(force=True)
+    card_id = next(iter(kanban.cards))
+    kanban.cards[card_id]["status"] = "done"
+    cards = [dict(c, id=cid) for cid, c in kanban.cards.items()]
+    from issue_sync.links import link_from_card
+    state.update_link(link_from_card(cards[0]).id, card_id=card_id, landing=landing)
+    return pane.connection_snapshot(conn, state, cards, None, True)["items"][0]
+
+
+def test_landing_waiting_item_carries_the_land_scripts_last_line(tmp_path):
+    item = _done_card_with_landing(tmp_path, {"status": "waiting", "message": "PR #101 set to auto-merge"})
+    assert item["card_status"] == "done" and item["landing"] == "waiting"
+    assert item["landing_message"] == "PR #101 set to auto-merge"
+    assert item["landing_error"] is None and not item["waiting"]
+
+
+def test_landing_failed_item_is_waiting_with_the_error_as_reason(tmp_path):
+    item = _done_card_with_landing(tmp_path, {"status": "failed", "error": "fatal: no remote", "message": "old"})
+    assert item["landing"] == "failed" and item["waiting"]
+    assert item["landing_error"] == "fatal: no remote" and item["landing_message"] is None
+
+
+def test_pane_js_renders_landing_marker_and_states_issue_source():
+    import shutil
+    import subprocess
+    import pytest
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+    script = """
+const src = require('fs').readFileSync(process.argv[1], 'utf8');
+const body = src.slice(src.indexOf('export function landingInfo'), src.indexOf('function ItemRow'));
+const m = {}; new Function('m', body.replace(/export /g, '') + '; m.f = landingInfo; m.t = ISSUE_STATE_TOOLTIP')(m);
+console.log(JSON.stringify([
+  m.f({card_status: 'done', landing: 'waiting', landing_message: 'PR #101 set to auto-merge'}),
+  m.f({card_status: 'done', landing: 'failed', landing_error: 'fatal: no remote'}),
+  m.f({card_status: 'done', landing: 'landed'}),
+  m.f({card_status: 'running', landing: 'waiting'}),
+  m.t]));
+"""
+    out = subprocess.run([node, "-e", script, str(REPO / "desktop" / "plugin.js")],
+                         capture_output=True, text=True, check=True).stdout
+    waiting, failed, landed, not_done, tip = json.loads(out)
+    assert waiting == {"marker": "landing", "tone": "warn", "line": "PR #101 set to auto-merge"}
+    assert failed["line"] == "fatal: no remote" and failed["tone"] == "bad"
+    assert landed is None and not_done is None
+    assert "Last state Issue Sync pushed" in tip

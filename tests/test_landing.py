@@ -434,3 +434,12 @@ def test_land_runner_records_nonzero_exit(tmp_path):
         check=False, capture_output=True, text=True,
     )
     assert json.loads(result.read_text(encoding="utf-8"))["exit"] == 1
+
+
+def test_command_exit_1_keeps_the_last_stdout_line_for_the_pane(tmp_path):
+    env = _env(tmp_path, done_gate="command", land_command=["/bin/land"], land_retry_seconds=10)
+    primed(env)
+    env.engine.push_outbound()
+    write_exit(env, 1, stdout="pushed issue/FAKE-1\nPR #101 set to auto-merge · Linear moves to Done when it merges\n\n")
+    env.engine.push_outbound()
+    assert landing(env)["message"] == "PR #101 set to auto-merge · Linear moves to Done when it merges"

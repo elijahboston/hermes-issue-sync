@@ -70,7 +70,22 @@ function IssueLink({ ctx, item }) {
   })
 }
 
+// Pure: the landing step for a done card, or null. A done card waiting on its land script is
+// not a sync mismatch; the tracker only moves to Done once it lands.
+export function landingInfo(item) {
+  if (item?.card_status !== 'done') return null
+  const s = item.landing
+  if (s === 'running') return { marker: 'landing', tone: 'warn', line: item.landing_message || 'land script running' }
+  if (s === 'waiting') return { marker: 'landing', tone: 'warn', line: item.landing_message || 'waiting to retry the land script' }
+  if (s === 'failed') return { marker: 'landing failed', tone: 'bad', line: item.landing_error || 'land script failed' }
+  return null
+}
+
+export const ISSUE_STATE_TOOLTIP =
+  'Last state Issue Sync pushed to the tracker. The tracker may have changed since (e.g. closed by a PR merge).'
+
 function ItemRow({ ctx, item }) {
+  const land = landingInfo(item)
   return jsxs('div', {
     className: 'flex flex-col gap-0.5 rounded px-2 py-1 hover:bg-(--ui-bg-tertiary)',
     children: [
@@ -80,11 +95,25 @@ function ItemRow({ ctx, item }) {
           jsx(StatusDot, { tone: itemTone(item) }),
           jsx(IssueLink, { ctx, item }),
           jsx('span', { className: 'min-w-0 flex-1 truncate', title: item.title, children: item.title }),
+          land &&
+            jsx('span', {
+              className: `rounded px-1 text-[10px] uppercase ${land.tone === 'bad' ? 'text-destructive' : 'text-amber-600'}`,
+              children: land.marker
+            }),
           jsx(Muted, { children: `card: ${item.card_status ?? '—'}` }),
-          jsx(Muted, { children: `issue: ${item.tracker_state ?? '—'}` })
+          jsx('span', {
+            className: 'text-(--ui-text-tertiary)',
+            title: ISSUE_STATE_TOOLTIP,
+            children: `issue: ${item.tracker_state ?? '—'}`
+          })
         ]
       }),
-      item.waiting &&
+      land &&
+        jsx('div', {
+          className: `pl-4 text-xs ${land.tone === 'bad' ? 'text-destructive' : 'text-amber-600'}`,
+          children: land.tone === 'bad' ? `Landing failed: ${land.line}` : land.line
+        }),
+      item.waiting && !land &&
         jsxs('div', {
           className: 'pl-4 text-xs text-amber-600',
           children: ['Waiting on you: ', jsx('span', { className: 'italic', children: item.question || 'see the issue' })]
