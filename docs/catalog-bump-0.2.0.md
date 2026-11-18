@@ -22,6 +22,7 @@ category: automation
 requires_hermes: ">=0.21.6"
 docs_url: https://github.com/elijahboston/hermes-issue-sync#readme
 version: "0.2.0"
+image: https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/banner.png
 screenshots:
   - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/pane-busy-dark.png
   - https://raw.githubusercontent.com/elijahboston/hermes-issue-sync/<sha>/docs/screenshots/pane-trackers-light.png
