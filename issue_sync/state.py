@@ -22,7 +22,7 @@ _LAST_ERROR = "last_error"
 LINK_FIELDS = frozenset({
     "card_id", "last_pushed_state", "comment_cursor", "done_comment_posted", "last_error",
     "asked_block", "answered_block", "question", "landing", "auto_retried", "review_card_id",
-    "last_pushed_state_type",
+    "last_pushed_state_type", "branch", "workspace_path",
 })
 
 

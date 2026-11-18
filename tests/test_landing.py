@@ -292,6 +292,16 @@ def test_summary_reaches_file_never_argv_or_env(tmp_path):
     assert kwargs["close_fds"] is True
 
 
+def test_land_env_falls_back_to_prepare_branch_and_workspace(tmp_path):
+    env = _env(tmp_path, done_gate="command", land_command=["/bin/land"])
+    primed(env, workspace="", branch="")
+    env.state.update_link("fake:FAKE-1", branch="issue/FAKE-1", workspace_path="/wt/FAKE-1")
+    env.engine.push_outbound()
+    env_vars = env.launcher.calls[0][1]["env"]
+    assert env_vars["BRANCH"] == "issue/FAKE-1"
+    assert env_vars["WORKTREE"] == "/wt/FAKE-1"
+
+
 def test_tick_returns_without_waiting_for_land_process(tmp_path):
     env = _env(tmp_path, done_gate="command", land_command=["/bin/land"], poll_interval_seconds=0)
     primed(env)

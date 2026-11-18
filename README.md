@@ -323,9 +323,15 @@ Land command environment (plus the inherited process env):
 | `ISSUE_KEY` | tracker issue key |
 | `ISSUE_URL` | issue URL |
 | `CARD_ID` | kanban card id |
-| `WORKTREE` | card `workspace_path` |
-| `BRANCH` | card `branch_name` |
+| `WORKTREE` | card `workspace_path`, else the prepare script's `workspace` path |
+| `BRANCH` | card `branch_name`, else the prepare script's `branch` (may be empty) |
 | `SUMMARY_FILE` | path of a file holding the worker's summary |
+
+**`WORKTREE` may already be gone.** When a card finishes, Hermes removes its `worktree`
+workspace if the tree is clean and every commit is on a remote ref — for example when the
+worker pushed its own branch. That happens before the land script runs. Do not treat a
+missing `WORKTREE` as a failure: prune and recreate it from `BRANCH` (local, else
+`origin/$BRANCH`), and fail only when the branch exists nowhere. The starter templates do this.
 
 Exit codes:
 

@@ -6,9 +6,41 @@ set -eu
 
 base="{{base_branch}}"
 
-if [ -z "${WORKTREE:-}" ] || [ ! -d "$WORKTREE" ]; then
-	echo "WORKTREE is missing or not a directory"
+repo="{{repo}}"
+
+if [ -z "${WORKTREE:-}" ]; then
+	echo "WORKTREE is not set"
 	exit 2
+fi
+
+# Hermes removes a done card's worktree when it is clean and every commit is on a remote,
+# which can happen before this script runs. Rebuild it from the branch when it's gone.
+if [ ! -d "$WORKTREE" ]; then
+	branch="${BRANCH:-}"
+	[ -n "$branch" ] || branch="issue/${ISSUE_KEY:-}"
+	if [ -z "$repo" ]; then
+		# prepare_worktree.sh puts worktrees at <repo>.worktrees/<key>.
+		parent=$(dirname "$WORKTREE")
+		case "$parent" in
+		*.worktrees) repo="${parent%.worktrees}" ;;
+		esac
+	fi
+	if [ -z "$repo" ] || [ ! -d "$repo" ]; then
+		echo "worktree $WORKTREE is gone and the repo to rebuild it from is unknown"
+		exit 2
+	fi
+	git -C "$repo" worktree prune >/dev/null 2>&1 || true
+	git -C "$repo" fetch origin >/dev/null 2>&1 || true
+	if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+		git -C "$repo" worktree add "$WORKTREE" "$branch" >/dev/null 2>&1 \
+			|| { echo "could not recreate worktree for $branch"; exit 2; }
+	elif git -C "$repo" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+		git -C "$repo" worktree add --track -b "$branch" "$WORKTREE" "origin/$branch" >/dev/null 2>&1 \
+			|| { echo "could not recreate worktree for $branch"; exit 2; }
+	else
+		echo "worktree is gone and branch $branch exists neither locally nor on origin"
+		exit 2
+	fi
 fi
 
 cd "$WORKTREE"

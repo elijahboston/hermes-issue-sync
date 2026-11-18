@@ -122,6 +122,10 @@ def test_hook_output_fields_reach_create_card():
         "workspace": "worktree:/tmp/wt", "branch": "feat/a",
         "skills": ("review", "test"), "model": "gpt", "provider": "openai",
     }
+    # Recorded so landing still knows them if the card loses branch_name or its worktree.
+    saved = engine.state.link("fake:A")
+    assert saved["branch"] == "feat/a"
+    assert saved["workspace_path"] == "/tmp/wt"
 
 
 def test_returned_body_keeps_exactly_one_leading_marker():

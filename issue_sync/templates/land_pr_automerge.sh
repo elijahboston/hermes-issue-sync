@@ -12,22 +12,45 @@ if [ -z "${BRANCH:-}" ]; then
 	exit 2
 fi
 
+repo="{{repo}}"
+
+# The worktree may already be gone: Hermes removes a done card's worktree when it is clean
+# and fully pushed. Work from the repo then; the branch must exist locally or on origin.
 if [ -n "${WORKTREE:-}" ] && [ -d "$WORKTREE" ]; then
 	cd "$WORKTREE"
+else
+	if [ -z "$repo" ] && [ -n "${WORKTREE:-}" ]; then
+		parent=$(dirname "$WORKTREE")
+		case "$parent" in
+		*.worktrees) repo="${parent%.worktrees}" ;;
+		esac
+	fi
+	if [ -z "$repo" ] || [ ! -d "$repo" ]; then
+		echo "worktree is gone and the repo is unknown"
+		exit 2
+	fi
+	cd "$repo"
+	git worktree prune >/dev/null 2>&1 || true
+	git fetch origin >/dev/null 2>&1 || true
+	if ! git show-ref --verify --quiet "refs/heads/$BRANCH" \
+		&& ! git show-ref --verify --quiet "refs/remotes/origin/$BRANCH"; then
+		echo "worktree is gone and branch $BRANCH exists neither locally nor on origin"
+		exit 2
+	fi
 fi
 
 if ! gh pr view "$BRANCH" --json state >/dev/null 2>&1; then
-	if ! git push -u origin "$BRANCH"; then
+	if git show-ref --verify --quiet "refs/heads/$BRANCH" && ! git push -u origin "$BRANCH"; then
 		echo "git push origin $BRANCH failed"
 		exit 2
 	fi
 	if [ -n "${SUMMARY_FILE:-}" ] && [ -f "$SUMMARY_FILE" ]; then
-		if ! gh pr create --base "$base" --fill --body-file "$SUMMARY_FILE"; then
+		if ! gh pr create --base "$base" --head "$BRANCH" --fill --body-file "$SUMMARY_FILE"; then
 			echo "gh pr create failed"
 			exit 2
 		fi
 	else
-		if ! gh pr create --base "$base" --fill; then
+		if ! gh pr create --base "$base" --head "$BRANCH" --fill; then
 			echo "gh pr create failed"
 			exit 2
 		fi

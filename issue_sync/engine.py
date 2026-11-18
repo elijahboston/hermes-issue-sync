@@ -438,8 +438,15 @@ class SyncEngine:
                 self.state.update_link(link.id, last_error=_error_text(exc))
                 logger.warning("issue-sync: could not create a card for %s: %s", link.id, _error_text(exc))
                 continue
+            prepared_fields: dict[str, Any] = {}
+            if extra.get("branch"):
+                prepared_fields["branch"] = str(extra["branch"])
+            workspace = str(extra.get("workspace") or "")
+            if workspace.startswith(("worktree:", "dir:")):
+                prepared_fields["workspace_path"] = workspace.split(":", 1)[1]
             self.state.update_link(link.id, card_id=card_id, last_pushed_state=issue.state,
-                                  last_pushed_state_type=issue.state_type or None, last_error=None)
+                                  last_pushed_state_type=issue.state_type or None, last_error=None,
+                                  **prepared_fields)
             created += 1
         self.last_skips = skips
         return created
@@ -736,8 +743,12 @@ class SyncEngine:
         env["ISSUE_KEY"] = link.key
         env["ISSUE_URL"] = link.url or ""
         env["CARD_ID"] = str(card_id or "")
-        env["WORKTREE"] = str(task.get("workspace_path") or card.get("workspace_path") or "")
-        env["BRANCH"] = str(task.get("branch_name") or card.get("branch_name") or "")
+        # Hermes may leave branch_name empty (and the worktree may already be removed), so fall
+        # back to what the prepare script reported when the card was created.
+        saved = self.state.link(link.id)
+        env["WORKTREE"] = str(task.get("workspace_path") or card.get("workspace_path")
+                              or saved.get("workspace_path") or "")
+        env["BRANCH"] = str(task.get("branch_name") or card.get("branch_name") or saved.get("branch") or "")
         env["SUMMARY_FILE"] = str(summary_file)
         landing.update({
             "attempt": attempt,

@@ -304,6 +304,63 @@ def test_merge_to_main_fast_forward(tmp_path):
     assert proc.returncode == 0, proc.stdout + proc.stderr
 
 
+def _removed_worktree(tmp_path: Path, *, push: bool, keep_local: bool) -> tuple[Path, Path, Path]:
+    """A pushed issue branch whose worktree Hermes already removed (CORE-646)."""
+    origin, repo = _repo_with_origin(tmp_path)
+    wt_root = Path(f"{repo}.worktrees")
+    wt = wt_root / "A-1"
+    _git(repo, "worktree", "add", "-b", "issue/A-1", str(wt), "main")
+    (wt / "file.txt").write_text("one\nfeature\n", encoding="utf-8")
+    _git(wt, "add", "file.txt")
+    _git(wt, "commit", "-m", "feature")
+    if push:
+        _git(wt, "push", "-u", "origin", "issue/A-1")
+    _git(repo, "worktree", "remove", str(wt))
+    if not keep_local:
+        _git(repo, "branch", "-D", "issue/A-1")
+    assert not wt.exists()
+    return origin, repo, wt
+
+
+def _run_land(script: Path, wt: Path, cwd: Path, branch: str = "issue/A-1"):
+    env = os.environ.copy()
+    env.update({
+        "WORKTREE": str(wt), "BRANCH": branch, "ISSUE_KEY": "A-1",
+        "ISSUE_URL": "", "CARD_ID": "t_1", "SUMMARY_FILE": "",
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t.invalid",
+        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t.invalid",
+    })
+    return subprocess.run(["sh", str(script)], cwd=cwd, env=env, capture_output=True, text=True)
+
+
+def test_merge_to_main_rebuilds_a_removed_worktree_from_origin(tmp_path):
+    origin, repo, wt = _removed_worktree(tmp_path, push=True, keep_local=False)
+    script = _land(tmp_path, "land_merge_to_main.sh", base_branch="main", repo=str(repo))
+    proc = _run_land(script, wt, tmp_path)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert wt.is_dir()
+    log = _git(origin, "log", "--format=%s", "main").stdout
+    assert "feature" in log
+
+
+def test_merge_to_main_rebuilds_from_local_branch_and_infers_repo(tmp_path):
+    origin, repo, wt = _removed_worktree(tmp_path, push=True, keep_local=True)
+    script = _land(tmp_path, "land_merge_to_main.sh", base_branch="main", repo="")
+    proc = _run_land(script, wt, tmp_path, branch="")  # BRANCH empty: falls back to issue/<KEY>
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "feature" in _git(origin, "log", "--format=%s", "main").stdout
+
+
+def test_merge_to_main_missing_worktree_and_branch_exits_2(tmp_path):
+    _origin, repo, wt = _removed_worktree(tmp_path, push=False, keep_local=False)
+    script = _land(tmp_path, "land_merge_to_main.sh", base_branch="main", repo=str(repo))
+    proc = _run_land(script, wt, tmp_path)
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    assert "exists neither locally nor on origin" in proc.stdout
+    assert not wt.exists()
+
+
 def test_merge_to_main_conflict_exits_2(tmp_path):
     origin, side = _repo_with_origin(tmp_path)
     other = tmp_path / "other"
