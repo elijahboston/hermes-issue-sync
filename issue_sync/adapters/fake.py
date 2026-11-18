@@ -78,13 +78,14 @@ class FakeAdapter(TrackerAdapter):
             if (not states or issue.state in states) and labels.issubset(issue.labels)
         ]
 
-    def move_issue(self, key: str, target_state: str) -> None:
+    def move_issue(self, key: str, target_state: str) -> str | None:
         self.calls.append(("move_issue", key, target_state))
         self._maybe_fail("move_issue", key)
         issue = self._issue(key)
         if self.allowed_states is not None and target_state not in self.allowed_states:
             raise TransitionNotAllowed(f"{self._name}: {key} cannot move to {target_state!r}")
-        self.issues[key] = replace(issue, state=target_state)
+        self.issues[key] = replace(issue, state=target_state, state_type="")
+        return None
 
     def post_comment(self, key: str, body: str) -> Comment:
         self.calls.append(("post_comment", key, body))

@@ -105,14 +105,15 @@ def test_fetch_issues_uses_search_jql_and_follows_page_tokens(secrets):
     t.done()
     assert [i.key for i in issues] == ["TSS-1", "TSS-2", "TSS-3"]
     assert issues[0] == Issue(key="TSS-1", title="Issue 1", body="Do the thing", url=f"{BASE}/browse/TSS-1",
-                              state="Backlog", labels=("agent",), updated_at="2026-11-07T05:41:08.540+0000")
+                              state="Backlog", labels=("agent",), updated_at="2026-11-07T05:41:08.540+0000",
+                              state_type="new")
     assert issues[1].state == "In Progress" and issues[1].body == ""
 
 
 # -- move ---------------------------------------------------------------------------------------
 
 TRANSITIONS = {"transitions": [
-    {"id": "11", "name": "Start work", "to": {"name": "In Progress"}},
+    {"id": "11", "name": "Start work", "to": {"name": "In Progress", "statusCategory": {"key": "indeterminate"}}},
     {"id": "21", "name": "Finish", "to": {"name": "Done"}},
     {"id": "31", "name": "Selected for Development", "to": {"name": "Selected for Development"}},
 ]}
@@ -130,7 +131,7 @@ def test_move_runs_transition_matching_target_status(secrets):
         step("POST", "/rest/api/3/issue/TSS-1/transitions", None, status=204,
              check=lambda q, b: b == {"transition": {"id": "11"}}),
     )
-    adapter(t).move_issue("TSS-1", "in progress")
+    assert adapter(t).move_issue("TSS-1", "in progress") == "indeterminate"  # status category, for the pane
     t.done()
 
 

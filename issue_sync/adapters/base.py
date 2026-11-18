@@ -23,6 +23,9 @@ class Issue:
     open_children: tuple[str, ...] = ()
     open_blockers: tuple[str, ...] = ()
     ancestor_labels: tuple[str, ...] = ()
+    # The state's workflow category, for the pane's icon: Linear ``state.type`` (backlog, unstarted,
+    # started, completed, canceled) or Jira ``statusCategory.key`` (new, indeterminate, done).
+    state_type: str = ""
 
 
 @dataclass(frozen=True)
@@ -78,8 +81,11 @@ class TrackerAdapter(ABC):
         """Issues matching the user's tracker-specific ``filter`` setting."""
 
     @abstractmethod
-    def move_issue(self, key: str, target_state: str) -> None:
-        """Move issue ``key`` to the tracker state NAMED ``target_state`` (adapters translate to ids)."""
+    def move_issue(self, key: str, target_state: str) -> str | None:
+        """Move issue ``key`` to the tracker state NAMED ``target_state`` (adapters translate to ids).
+
+        Returns the target state's type (see ``Issue.state_type``) when the adapter knows it.
+        """
 
     @abstractmethod
     def post_comment(self, key: str, body: str) -> Comment:

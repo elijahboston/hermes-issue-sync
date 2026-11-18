@@ -438,7 +438,8 @@ class SyncEngine:
                 self.state.update_link(link.id, last_error=_error_text(exc))
                 logger.warning("issue-sync: could not create a card for %s: %s", link.id, _error_text(exc))
                 continue
-            self.state.update_link(link.id, card_id=card_id, last_pushed_state=issue.state, last_error=None)
+            self.state.update_link(link.id, card_id=card_id, last_pushed_state=issue.state,
+                                  last_pushed_state_type=issue.state_type or None, last_error=None)
             created += 1
         self.last_skips = skips
         return created
@@ -548,13 +549,14 @@ class SyncEngine:
         moved = 0
         if target != entry.get("last_pushed_state"):
             try:
-                self.adapter.move_issue(link.key, target)
+                pushed_type = self.adapter.move_issue(link.key, target)
             except RateLimited:
                 raise
             except Exception as exc:
                 errors.append(_error_text(exc))
             else:
-                self.state.update_link(link.id, last_pushed_state=target)
+                self.state.update_link(link.id, last_pushed_state=target,
+                                       last_pushed_state_type=pushed_type if isinstance(pushed_type, str) else None)
                 moved = 1
         # The summary is posted even when the move failed: a workflow that refuses the
         # transition must not swallow the completion report.

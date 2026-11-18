@@ -127,6 +127,7 @@ def _issue_from_node(node: Mapping[str, Any], base: str) -> Issue | None:
         open_children=_open_children(fields),
         open_blockers=_open_blockers(fields),
         ancestor_labels=_ancestor_labels(fields),
+        state_type=str(((fields.get("status") or {}).get("statusCategory") or {}).get("key") or ""),
     )
 
 
@@ -224,10 +225,10 @@ class JiraAdapter(TrackerAdapter):
             if data.get("isLast", True) or not token:
                 return issues
 
-    def move_issue(self, key: str, target_state: str) -> None:
+    def move_issue(self, key: str, target_state: str) -> str | None:
         wanted = target_state.strip().casefold()
         if self._current_status(key).casefold() == wanted:
-            return
+            return None
         data = self._request("GET", self._issue_path(key, "/transitions")).data or {}
         transitions = list(data.get("transitions") or [])
         chosen = next((t for t in transitions if ((t.get("to") or {}).get("name") or "").casefold() == wanted), None)
@@ -238,6 +239,7 @@ class JiraAdapter(TrackerAdapter):
             raise TransitionNotAllowed(
                 f"jira: {key} cannot move to {target_state!r}; reachable statuses: {', '.join(reachable) or 'none'}")
         self._request("POST", self._issue_path(key, "/transitions"), json_body={"transition": {"id": str(chosen["id"])}})
+        return str(((chosen.get("to") or {}).get("statusCategory") or {}).get("key") or "") or None
 
     def post_comment(self, key: str, body: str) -> Comment:
         data = self._request("POST", self._issue_path(key, "/comment"), json_body={"body": adf.from_text(body)}).data

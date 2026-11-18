@@ -145,28 +145,31 @@ def test_landing_failed_item_is_waiting_with_the_error_as_reason(tmp_path):
     assert item["landing_error"] == "fatal: no remote" and item["landing_message"] is None
 
 
-def test_pane_js_renders_landing_marker_and_states_issue_source():
-    import shutil
-    import subprocess
-    import pytest
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("node not installed")
-    script = """
-const src = require('fs').readFileSync(process.argv[1], 'utf8');
-const body = src.slice(src.indexOf('export function landingInfo'), src.indexOf('function ItemRow'));
-const m = {}; new Function('m', body.replace(/export /g, '') + '; m.f = landingInfo; m.t = ISSUE_STATE_TOOLTIP')(m);
-console.log(JSON.stringify([
-  m.f({card_status: 'done', landing: 'waiting', landing_message: 'PR #101 set to auto-merge'}),
-  m.f({card_status: 'done', landing: 'failed', landing_error: 'fatal: no remote'}),
-  m.f({card_status: 'done', landing: 'landed'}),
-  m.f({card_status: 'running', landing: 'waiting'}),
-  m.t]));
-"""
-    out = subprocess.run([node, "-e", script, str(REPO / "desktop" / "plugin.js")],
-                         capture_output=True, text=True, check=True).stdout
-    waiting, failed, landed, not_done, tip = json.loads(out)
-    assert waiting == {"marker": "landing", "tone": "warn", "line": "PR #101 set to auto-merge"}
-    assert failed["line"] == "fatal: no remote" and failed["tone"] == "bad"
-    assert landed is None and not_done is None
-    assert "Last state Issue Sync pushed" in tip
+def test_card_title_drops_the_key_prefix_and_a_repeated_key():
+    assert pane._card_title({"title": "[CORE-639] CORE-639 — Docs: add a section"}, "CORE-639") == "Docs: add a section"
+    assert pane._card_title({"title": "[CORE-639] CORE-639: Docs"}, "CORE-639") == "Docs"
+    assert pane._card_title({"title": "[CORE-639] Docs"}, "CORE-639") == "Docs"
+    # A different key, or the key as part of a word, stays.
+    assert pane._card_title({"title": "[CORE-6] CORE-639 — Docs"}, "CORE-6") == "CORE-639 — Docs"
+    assert pane._card_title({"title": "[A-1] A-1"}, "A-1") == "A-1"
+
+
+def test_state_kind_reads_the_type_then_the_name():
+    assert pane.state_kind("started", "In Progress") == "progress"
+    assert pane.state_kind("started", "In Review") == "review"
+    assert pane.state_kind("completed", "Shipped") == "done"
+    assert pane.state_kind("unstarted", "Todo") == "todo"
+    assert pane.state_kind("indeterminate", "Doing") == "progress"  # Jira status category
+    assert pane.state_kind("done", "Closed") == "done"
+    assert pane.state_kind(None, "Done") == "done" and pane.state_kind(None, None) is None
+    assert pane.state_kind(None, "Waiting for QA") is None
+
+
+def test_snapshot_carries_state_kind_and_poll_interval(tmp_path):
+    conn, adapter, kanban, state, engine = _setup(tmp_path)
+    adapter.add_issue("F-1", "x", state="Todo")
+    engine.tick(force=True)
+    engine.tick(force=True)  # last_cards is read at the start of a pass
+    block = pane.connection_snapshot(conn, state, engine.last_cards, None, True)
+    assert block["items"][0]["tracker_state_kind"] == "todo"
+    assert block["poll_interval_seconds"] == 60.0

@@ -80,7 +80,8 @@ def test_inbound_creates_card_with_marker_key_and_assignee():
     assert link_from_card(card) == Link("fake", "FAKE-1", "https://t.invalid/FAKE-1")
     assert card["assignee"] == "worker"
     assert env.kanban.idempotency_keys[card_id] == "issue-sync:fake:FAKE-1"
-    assert env.state.link("fake:FAKE-1") == {"card_id": card_id, "last_pushed_state": "Todo", "last_error": None}
+    assert env.state.link("fake:FAKE-1") == {"card_id": card_id, "last_pushed_state": "Todo",
+                                                   "last_pushed_state_type": None, "last_error": None}
 
 
 def test_blank_assignee_means_unassigned():

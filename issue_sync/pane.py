@@ -22,10 +22,59 @@ DATA_NAME = "hermes-issue-sync"
 _MAX_ITEMS = 200
 
 
-def _card_title(card: Mapping[str, Any]) -> str:
+def _card_title(card: Mapping[str, Any], key: str = "") -> str:
     title = str(card.get("title") or "")
     # Cards are titled "[KEY] title"; the pane shows the key separately.
-    return title.split("] ", 1)[1] if title.startswith("[") and "] " in title else title
+    if title.startswith("[") and "] " in title:
+        title = title.split("] ", 1)[1]
+    # Issue titles that repeat their own key ("KEY — title", "KEY: title") would show it twice.
+    if key and title.startswith(key):
+        rest = title[len(key):]
+        stripped = rest.lstrip()
+        if stripped[:1] in ("—", "–", "-", ":") and stripped[1:2] in (" ", ""):
+            return stripped[1:].strip() or title
+    return title
+
+
+# Tracker state type → one of the four icons the pane draws. Linear ``state.type`` and Jira
+# ``statusCategory.key`` both map here; unknown types fall back to the state name below.
+_STATE_KINDS = {
+    "backlog": "todo", "unstarted": "todo", "triage": "todo", "new": "todo",
+    "started": "progress", "indeterminate": "progress",
+    "completed": "done", "done": "done",
+    "canceled": "canceled",
+}
+
+
+def state_kind(state_type: Any, state_name: Any) -> str | None:
+    """``todo`` / ``progress`` / ``review`` / ``done`` / ``canceled``, or None when unknown.
+
+    Review is not a state type in either tracker; it is read off the name ("In Review", "Code Review").
+    """
+    name = str(state_name or "").strip().casefold()
+    kind = _STATE_KINDS.get(str(state_type or "").strip().casefold())
+    if "review" in name and kind in (None, "progress"):
+        return "review"
+    if kind:
+        return kind
+    if not name:
+        return None
+    if name in ("done", "closed", "complete", "completed", "resolved", "merged"):
+        return "done"
+    if name in ("canceled", "cancelled", "duplicate", "won't do", "wont do"):
+        return "canceled"
+    if "progress" in name or name in ("doing", "started", "active"):
+        return "progress"
+    if name in ("todo", "to do", "backlog", "open", "new", "triage", "selected for development"):
+        return "todo"
+    return None
+
+
+def _poll_interval(conn: Any) -> float:
+    """The connection's poll interval in seconds, as the engine reads it (for the stale footer)."""
+    from .engine import _poll_interval as parse
+    settings = getattr(conn, "settings", None) or {}
+    return parse(settings.get("poll_interval_seconds") if isinstance(settings, Mapping) else None)
 
 
 def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]], error: str | None,
@@ -57,10 +106,11 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
         items.append({
             "key": link.key,
             "url": link.url,
-            "title": _card_title(card),
+            "title": _card_title(card, link.key),
             "card_id": card.get("id"),
             "card_status": card.get("status"),
             "tracker_state": entry.get("last_pushed_state"),
+            "tracker_state_kind": state_kind(entry.get("last_pushed_state_type"), entry.get("last_pushed_state")),
             "waiting": waiting,
             "question": entry.get("question") if waiting and card.get("status") == "blocked" else None,
             "error": entry.get("last_error"),
@@ -72,7 +122,8 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
     for link_id, entry in sorted(links.items()):
         if link_id not in seen and isinstance(entry, dict) and entry.get("last_error") and not entry.get("card_id"):
             items.append({"key": link_id.rsplit(":", 1)[-1], "url": "", "title": "", "card_id": None,
-                          "card_status": None, "tracker_state": None, "waiting": False,
+                          "card_status": None, "tracker_state": None, "tracker_state_kind": None,
+                          "waiting": False,
                           "question": None, "error": entry["last_error"],
                           "landing": None, "landing_error": None, "landing_message": None})
     order = {"blocked": 0, "running": 1, "ready": 2, "review": 3, "todo": 4, "done": 5, "archived": 6}
@@ -88,6 +139,7 @@ def connection_snapshot(conn: Any, state: Any, cards: Iterable[Mapping[str, Any]
         "running": running,
         "error": error,
         "last_poll_at": state.last_poll_at if state is not None else None,
+        "poll_interval_seconds": _poll_interval(conn),
         "last_error": state.last_error if state is not None else None,
         "backoff_until": backoff if backoff and backoff > time.time() else None,
         "items": items[:_MAX_ITEMS],

@@ -105,7 +105,8 @@ def test_fetch_issues_ands_filters_and_follows_pages(secret):
     assert [i.key for i in issues] == ["CORE-1", "CORE-2", "CORE-3"]
     assert issues[1] == Issue(key="CORE-2", title="Issue 2", body="Body 2",
                               url="https://linear.app/acme/issue/CORE-2/issue-2", state="In Progress",
-                              labels=("agent", "Bug"), updated_at="2026-11-06T06:27:53.660Z")
+                              labels=("agent", "Bug"), updated_at="2026-11-06T06:27:53.660Z",
+                              state_type="unstarted")
     assert issues[0].body == ""  # null description
 
 
@@ -118,7 +119,7 @@ def test_fetch_issues_label_only_by_default(secret):
 
 def test_move_matches_state_name_case_insensitively(secret):
     t = Transport(issue_ref("Todo"), team_states(), move("st-review"))
-    adapter(t).move_issue("CORE-7", "in review")
+    assert adapter(t).move_issue("CORE-7", "in review") == "started"  # the state type, for the pane icon
     t.done()
 
 

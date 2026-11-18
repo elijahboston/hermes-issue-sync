@@ -50,7 +50,7 @@ query Issues($filter: IssueFilter!, $first: Int!, $after: String) {
 
 ISSUE_REF_QUERY = """
 query IssueRef($id: String!) {
-  issue(id: $id) { id state { id name } team { id } }
+  issue(id: $id) { id state { id name type } team { id } }
 }
 """
 
@@ -186,6 +186,7 @@ def _issue_from_node(node: Mapping[str, Any]) -> Issue:
         open_children=_open_children(node),
         open_blockers=_open_blockers(node),
         ancestor_labels=_ancestor_labels(node),
+        state_type=(node.get("state") or {}).get("type") or "",
     )
 
 
@@ -288,11 +289,11 @@ class LinearAdapter(TrackerAdapter):
                                first=ISSUES_PAGE_SIZE)
         return [_issue_from_node(node) for node in nodes]
 
-    def move_issue(self, key: str, target_state: str) -> None:
+    def move_issue(self, key: str, target_state: str) -> str | None:
         issue = self._issue_ref(key)
         current = issue.get("state") or {}
         if (current.get("name") or "").casefold() == target_state.strip().casefold():
-            return
+            return current.get("type") or None
         team_id = (issue.get("team") or {}).get("id") or ""
         states = self._states(team_id)
         state = self._resolve_state(states, target_state)
@@ -300,10 +301,11 @@ class LinearAdapter(TrackerAdapter):
             names = ", ".join(s.get("name") or "?" for s in states) or "none"
             raise TransitionNotAllowed(f"linear: no state {target_state!r} for {key}; valid states: {names}")
         if state.get("id") == current.get("id"):
-            return
+            return state.get("type") or None
         result = self._graphql(ISSUE_UPDATE_MUTATION, {"id": issue["id"], "stateId": state["id"]})
         if not (result.get("issueUpdate") or {}).get("success"):
             raise AdapterError(f"linear: moving {key} to {state.get('name')!r} was not accepted")
+        return state.get("type") or None
 
     def post_comment(self, key: str, body: str) -> Comment:
         issue = self._issue_ref(key)
